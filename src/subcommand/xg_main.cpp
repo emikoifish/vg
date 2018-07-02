@@ -330,14 +330,14 @@ int main_xg(int argc, char** argv) {
     }
     
     if (edges_from) {
-        vector<Edge> edges = graph->edges_from(node_id);
+        vector<Edge> edges = graph->edges_start_side(node_id);
         for (auto& edge : edges) {
             cout << edge.from() << (edge.from_start()?"-":"+")
                  << " -> " << edge.to() << (edge.to_end()?"-":"+") << endl;
         }
     }
     if (edges_to) {
-        vector<Edge> edges = graph->edges_to(node_id);
+        vector<Edge> edges = graph->edges_end_side(node_id);
         for (auto& edge : edges) {
             cout << edge.from() << (edge.from_start()?"-":"+")
                  << " -> " << edge.to() << (edge.to_end()?"-":"+") << endl;

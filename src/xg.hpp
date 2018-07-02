@@ -109,7 +109,7 @@ public:
                bool print_graph,
                bool store_threads,
                bool is_sorted_dag,
-               int doubly_reversing_sides);
+               int self_reversing_sides);
                
     // What's the maximum XG version number we can read with this code?
     const static uint32_t MAX_INPUT_VERSION = 10;
@@ -124,7 +124,7 @@ public:
                      std::string name = "");
     
     // If XG is not in current format, change to new format (edges in start/end format, not from/to format)
-    void convert_old_edge_to_new(int_vector<> g_iv_old, bit_vector g_bv_old, rank_support_v<1> g_bv_rank_old, bit_vector::select_1_type g_bv_select_old);
+    void convert_old_edge_to_new(int_vector<>& g_iv_old, bit_vector& g_bv_old, rank_support_v<1>& g_bv_rank_old, bit_vector::select_1_type& g_bv_select_old);
     
     ////////////////////////////////////////////////////////////////////////////
     // Basic API
@@ -168,8 +168,8 @@ public:
     bool has_edge(const Edge& edge) const;
     
     vector<Edge> edges_of(int64_t id) const;
-    vector<Edge> edges_to(int64_t id) const;
-    vector<Edge> edges_from(int64_t id) const;
+    vector<Edge> edges_start_side(int64_t id) const;
+    vector<Edge> edges_end_side(int64_t id) const;
     vector<Edge> edges_on_start(int64_t id) const;
     vector<Edge> edges_on_end(int64_t id) const;
     
@@ -600,11 +600,15 @@ private:
     const static int G_NODE_LENGTH_OFFSET = 2;
     const static int G_NODE_TO_COUNT_OFFSET = 3;
     const static int G_NODE_FROM_COUNT_OFFSET = 4;
-    const static int G_NODE_HEADER_LENGTH = 5;
+    const static int G_NODE_HEADER_OFFSET = 5;
     
     const static int G_EDGE_OFFSET_OFFSET = 0;
     const static int G_EDGE_TYPE_OFFSET = 1;
     const static int G_EDGE_LENGTH = 2;
+    
+    // And define some edge types
+    const static int64_t G_TO_START_EDGE_TYPE = 0;
+    const static int64_t G_TO_END_EDGE_TYPE = 1;
     
     // And some masks
     const static size_t HIGH_BIT = (size_t)1 << 63;
