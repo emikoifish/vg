@@ -898,7 +898,7 @@ void XG::from_callback(function<void(function<void(Graph&)>)> get_chunks,
         }
     }
     
-    build(node_label, start_side, end_side, path_nodes, circular_paths, validate_graph, print_graph,
+    build(node_label, start_side, end_side, path_nodes, circular_paths validate_graph, print_graph,
         store_threads, is_sorted_dag, self_reversing_sides);
 }
 
