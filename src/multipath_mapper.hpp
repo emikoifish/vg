@@ -26,6 +26,10 @@
 #include "algorithms/extract_extending_graph.hpp"
 #include "algorithms/topological_sort.hpp"
 #include "algorithms/weakly_connected_components.hpp"
+#include "algorithms/is_acyclic.hpp"
+#include "algorithms/is_single_stranded.hpp"
+#include "algorithms/split_strands.hpp"
+#include "algorithms/count_walks.hpp"
 
 #include <structures/union_find.hpp>
 #include <gbwt/gbwt.h>
@@ -78,10 +82,13 @@ namespace vg {
         /// when mappings are likely to have occurred by chance
         void calibrate_mismapping_detection(size_t num_simulations = 1000, size_t simulated_read_length = 150);
         
+        /// Should be called once after construction, or any time the band padding multiplier is changed
+        void init_band_padding_memo();
+        
         // parameters
         
         int64_t max_snarl_cut_size = 5;
-        int32_t band_padding = 2;
+        double band_padding_multiplier = 1.0;
         size_t max_expected_dist_approx_error = 8;
         int32_t num_alt_alns = 4;
         double mem_coverage_min_ratio = 0.5;
@@ -90,19 +97,25 @@ namespace vg {
         double log_likelihood_approx_factor = 1.0;
         size_t min_clustering_mem_length = 0;
         size_t max_p_value_memo_size = 500;
+        size_t band_padding_memo_size = 500;
         double pseudo_length_multiplier = 1.65;
         double max_mapping_p_value = 0.00001;
         bool unstranded_clustering = true;
         size_t max_single_end_mappings_for_rescue = 64;
         size_t max_rescue_attempts = 32;
+        size_t plausible_rescue_cluster_coverage_diff = 5;
         size_t secondary_rescue_attempts = 4;
         double secondary_rescue_score_diff = 1.0;
         double mapq_scaling_factor = 1.0 / 4.0;
         // There must be a ScoreProvider provided, and a positive population_max_paths, if this is true
         bool use_population_mapqs = false;
+        // If this is set, use_population_mapqs must be set, and we will always
+        // try to compute population scores, even if there is nothing to
+        // disambiguate. This lets us get an accurate count of scorable reads.
+        bool always_check_population = false;
         size_t population_max_paths = 10;
         // Note that, like the haplotype scoring code, we work with recombiantion penalties in exponent form.
-        double recombination_penalty = 9 * 2.3;
+        double recombination_penalty = 20.7; // 20.7 = 9 * 2.3
         size_t rescue_only_min = 128;
         size_t rescue_only_anchor_max = 16;
         size_t order_length_repeat_hit_max = 0;
@@ -110,9 +123,14 @@ namespace vg {
         size_t min_median_mem_coverage_for_split = 0;
         bool suppress_cluster_merging = false;
         size_t alt_anchor_max_length_diff = 5;
+        bool dynamic_max_alt_alns = false;
+        bool simplify_topologies = false;
         
         //static size_t PRUNE_COUNTER;
         //static size_t SUBGRAPH_TOTAL;
+        //static size_t SECONDARY_RESCUE_COUNT;
+        //static size_t SECONDARY_RESCUE_ATTEMPT;
+        //static size_t SECONDARY_RESCUE_TOTAL;
         
         /// We often pass around clusters of MEMs and their graph positions.
         using memcluster_t = vector<pair<const MaximalExactMatch*, pos_t>>;
@@ -154,7 +172,8 @@ namespace vg {
                                      MappingQualityMethod mapq_method,
                                      vector<clustergraph_t>& cluster_graphs,
                                      vector<MultipathAlignment>& multipath_alns_out,
-                                     size_t num_mapping_attempts);
+                                     size_t num_mapping_attempts,
+                                     vector<size_t>* cluster_idxs = nullptr);
         
         /// After clustering MEMs, extracting graphs, assigning hits to cluster graphs, and determining
         /// which cluster graph pairs meet the fragment length distance constraints, perform multipath
@@ -164,6 +183,7 @@ namespace vg {
                                           vector<clustergraph_t>& cluster_graphs2,
                                           vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs,
                                           vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
+                                          vector<pair<size_t, size_t>>& duplicate_pairs_out,
                                           OrientedDistanceClusterer::paths_of_node_memo_t* paths_of_node_memo = nullptr,
                                           OrientedDistanceClusterer::oriented_occurences_memo_t* oriented_occurences_memo = nullptr,
                                           OrientedDistanceClusterer::handle_memo_t* handle_memo = nullptr);
@@ -182,6 +202,7 @@ namespace vg {
         void attempt_rescue_for_secondaries(const Alignment& alignment1, const Alignment& alignment2,
                                             vector<clustergraph_t>& cluster_graphs1,
                                             vector<clustergraph_t>& cluster_graphs2,
+                                            vector<pair<size_t, size_t>>& duplicate_pairs,
                                             vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
                                             vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs);
         
@@ -193,7 +214,8 @@ namespace vg {
                                                       vector<memcluster_t>& clusters1, vector<memcluster_t>& clusters2,
                                                       vector<clustergraph_t>& cluster_graphs1, vector<clustergraph_t>& cluster_graphs2,
                                                       vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
-                                                      vector<pair<pair<size_t, size_t>, int64_t>>& pair_distances, size_t max_alt_mappings,
+                                                      vector<pair<pair<size_t, size_t>, int64_t>>& pair_distances,
+                                                      size_t max_alt_mappings,
                                                       OrientedDistanceClusterer::paths_of_node_memo_t* paths_of_node_memo = nullptr,
                                                       OrientedDistanceClusterer::oriented_occurences_memo_t* oriented_occurences_memo = nullptr,
                                                       OrientedDistanceClusterer::handle_memo_t* handle_memo = nullptr);
@@ -217,7 +239,8 @@ namespace vg {
         
         /// If there are any MultipathAlignments with multiple connected components, split them
         /// up and add them to the return vector
-        void split_multicomponent_alignments(vector<MultipathAlignment>& multipath_alns_out) const;
+        void split_multicomponent_alignments(vector<MultipathAlignment>& multipath_alns_out,
+                                             vector<size_t>* cluster_idxs = nullptr) const;
         
         /// If there are any MultipathAlignments with multiple connected components, split them
         /// up and add them to the return vector, also measure the distance between them and add
@@ -232,20 +255,55 @@ namespace vg {
                              memcluster_t& graph_mems,
                              MultipathAlignment& multipath_aln_out) const;
         
+        /// Removes the sections of an Alignment's path within snarls and re-aligns them with multiple traceback
+        /// to create a multipath alignment with non-trivial topology
+        void make_nontrivial_multipath_alignment(const Alignment& alignment, VG& subgraph,
+                                                 unordered_map<id_t, pair<id_t, bool>>& translator,
+                                                 SnarlManager& snarl_manager, MultipathAlignment& multipath_aln_out) const;
+        
         /// Remove the full length bonus from all source or sink subpaths that received it
-        void strip_full_length_bonuses(MultipathAlignment& mulipath_aln) const;
+        void strip_full_length_bonuses(MultipathAlignment& multipath_aln) const;
         
         /// Compute a mapping quality from a list of scores, using the selected method.
         int32_t compute_raw_mapping_quality_from_scores(const vector<double>& scores, MappingQualityMethod mapq_method) const;
         
         /// Sorts mappings by score and store mapping quality of the optimal alignment in the MultipathAlignment object
-        void sort_and_compute_mapping_quality(vector<MultipathAlignment>& multipath_alns, MappingQualityMethod mapq_method) const;
+        /// Optionally also sorts a vector of indexes to keep track of the cluster-of-origin
+        void sort_and_compute_mapping_quality(vector<MultipathAlignment>& multipath_alns, MappingQualityMethod mapq_method,
+                                              vector<size_t>* cluster_idxs = nullptr) const;
         
         /// Sorts mappings by score and store mapping quality of the optimal alignment in the MultipathAlignment object
         /// If there are ties between scores, breaks them by the expected distance between pairs as computed by the
         /// OrientedDistanceClusterer::cluster_pairs function (modified cluster_pairs vector)
         void sort_and_compute_mapping_quality(vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs,
-                                              vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs) const;
+                                              vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs,
+                                              vector<pair<size_t, size_t>>* duplicate_pairs_out = nullptr) const;
+
+        /// Estimates the probability that the correct cluster was not chosen as a cluster to rescue from and caps the
+        /// mapping quality to the minimum of the current mapping quality and this probability (in Phred scale)
+        void cap_mapping_quality_by_rescue_probability(vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
+                                                       vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs,
+                                                       vector<clustergraph_t>& cluster_graphs1,
+                                                       vector<clustergraph_t>& cluster_graphs2,
+                                                       bool from_secondary_rescue) const;
+        
+        /// Estimates the probability that the correct cluster was not identified because of sub-sampling MEM hits and
+        /// caps the mapping quality to this probability (in Phred scale)
+        void cap_mapping_quality_by_hit_sampling_probability(vector<MultipathAlignment>& multipath_alns_out,
+                                                             vector<size_t>& cluster_idxs,
+                                                             vector<clustergraph_t>& cluster_graphs) const;
+        
+        /// Estimates the probability that the correct cluster pair was not identified because of sub-sampling MEM hits and
+        /// caps the mapping quality to this probability (in Phred scale)
+        void cap_mapping_quality_by_hit_sampling_probability(vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
+                                                             vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs,
+                                                             vector<clustergraph_t>& cluster_graphs1,
+                                                             vector<clustergraph_t>& cluster_graphs2,
+                                                             bool did_secondary_rescue) const;
+        
+        /// Estimates the probability that a cluster with the same hits would have been missed because of
+        /// subsampling high-count SMEMs
+        double prob_equivalent_clusters_hits_missed(const memcluster_t& cluster) const;
         
         /// Computes the log-likelihood of a given fragment length in the trained distribution
         double fragment_length_log_likelihood(int64_t length) const;
@@ -279,7 +337,6 @@ namespace vg {
         /// multipath alignments
         bool share_terminal_positions(const MultipathAlignment& multipath_aln_1, const MultipathAlignment& multipath_aln_2) const;
         
-        
         /// Get a thread_local RRMemo with these parameters
         haploMath::RRMemo& get_rr_memo(double recombination_penalty, size_t population_size) const;;
         
@@ -298,6 +355,9 @@ namespace vg {
         
         // a memo for the transcendental p-value function (thread local to maintain threadsafety)
         static thread_local unordered_map<pair<size_t, size_t>, double> p_value_memo;
+        
+        // a memo for transcendental band padidng function (gets initialized at construction)
+        vector<size_t> band_padding_memo;
     };
         
 }

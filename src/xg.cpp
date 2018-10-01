@@ -147,11 +147,12 @@ void XG::load(istream& in) {
         case 7:
         case 8:
         case 9:
+        case 10:
             cerr << "warning:[XG] Loading an out-of-date XG format. In-memory conversion between versions can be time-consuming. "
                  << "For better performance over repeated loads, consider recreating this XG with 'vg index' "
                  << "or upgrading it with 'vg xg'." << endl;
             // Fall through
-        case 10:
+        case 11:
             {
                 sdsl::read_member(seq_length, in);
                 sdsl::read_member(node_count, in);
@@ -168,7 +169,7 @@ void XG::load(istream& in) {
                 }
                 r_iv.load(in);
                 
-                if (file_version > 9) {
+                if (file_version >= 10) {
                     g_iv.load(in);
                     g_bv.load(in);
                     g_bv_rank.load(in, &g_bv);
@@ -474,6 +475,14 @@ void XGPath::load(istream& in, uint32_t file_version, const function<int64_t(siz
     offsets.load(in);
     offsets_rank.load(in, &offsets);
     offsets_select.load(in, &offsets);
+    
+    if (file_version >= 10) {
+        // As of v10 we support the is_circular flag
+        sdsl::read_member(is_circular, in);
+    } else {
+        // Previous versions are interpreted as not circular
+        is_circular = false;
+    }
 }
 
 size_t XGPath::serialize(std::ostream& out,
@@ -489,6 +498,7 @@ size_t XGPath::serialize(std::ostream& out,
     written += offsets.serialize(out, child, "path_node_starts_" + name);
     written += offsets_rank.serialize(out, child, "path_node_starts_rank_" + name);
     written += offsets_select.serialize(out, child, "path_node_starts_select_" + name);
+    written += sdsl::write_member(is_circular, out, child, "is_circular_" + name);
     
     sdsl::structure_tree::add_size(child, written);
     
@@ -497,9 +507,13 @@ size_t XGPath::serialize(std::ostream& out,
 
 XGPath::XGPath(const string& path_name,
                const vector<trav_t>& path,
+               bool is_circular,
                size_t node_count,
                XG& graph,
                size_t* unique_member_count_out) {
+
+    // The circularity flag is just a normal bool
+    this->is_circular = is_circular;
 
     // node ids, the literal path
     int_vector<> ids_iv;
@@ -750,8 +764,12 @@ void XG::from_callback(function<void(function<void(Graph&)>)> get_chunks,
     unordered_map<side_t, vector<side_t> > to_from;
     unordered_map<side_t, vector<side_t> > start_side;
     unordered_map<side_t, vector<side_t> > end_side;
-    map<string, vector<trav_t> > path_nodes;
     int self_reversing_sides = 0;
+    // And the nodes on each path
+    map<string, vector<trav_t> > path_nodes;
+    // And which paths are circular
+    unordered_set<string> circular_paths;
+
     // This takes in graph chunks and adds them into our temporary storage.
     function<void(Graph&)> lambda = [this,
                                      &node_label,
@@ -760,6 +778,7 @@ void XG::from_callback(function<void(function<void(Graph&)>)> get_chunks,
                                      &start_side,
                                      &end_side,
                                      &path_nodes,
+                                     &circular_paths,
                                      &self_reversing_sides](Graph& graph) {
 
         for (int64_t i = 0; i < graph.node_size(); ++i) {
@@ -812,13 +831,19 @@ void XG::from_callback(function<void(function<void(Graph&)>)> get_chunks,
             }
         }
 
-        // Print out all the paths in the graph we are loading
         for (int64_t i = 0; i < graph.path_size(); ++i) {
             const Path& p = graph.path(i);
             const string& name = p.name();
 #ifdef VERBOSE_DEBUG
+            // Print out all the paths in the graph we are loading
             cerr << "Path " << name << ": ";
 #endif
+            
+            if (p.is_circular()) {
+                // Remember the circular paths
+                circular_paths.insert(name);
+            }
+
             vector<trav_t>& path = path_nodes[name];
             for (int64_t j = 0; j < p.mapping_size(); ++j) {
                 const Mapping& m = p.mapping(j);
@@ -873,7 +898,7 @@ void XG::from_callback(function<void(function<void(Graph&)>)> get_chunks,
             exit(1);
         }
     }
-    build(node_label, start_side, end_side, path_nodes, validate_graph, print_graph,
+    build(node_label, start_side, end_side, path_nodes, circular_paths, validate_graph, print_graph,
         store_threads, is_sorted_dag, self_reversing_sides);
     
 }
@@ -882,6 +907,7 @@ void XG::build(vector<pair<id_t, string> >& node_label,
                unordered_map<side_t, vector<side_t> >& start_side,
                unordered_map<side_t, vector<side_t> >& end_side,
                map<string, vector<trav_t> >& path_nodes,
+               unordered_set<string>& circular_paths,
                bool validate_graph,
                bool print_graph,
                bool store_threads,
@@ -1042,7 +1068,8 @@ void XG::build(vector<pair<id_t, string> >& node_label,
         path_names += start_marker + path_name + end_marker;
         // The path constructor helpfully counts unique path members for us
         size_t unique_member_count;
-        XGPath* path = new XGPath(path_name, pathpair.second, node_count, *this, &unique_member_count);
+        XGPath* path = new XGPath(path_name, pathpair.second, circular_paths.count(path_name),
+            node_count, *this, &unique_member_count);
         paths.push_back(path);
         path_node_count += unique_member_count;
     }
@@ -1440,17 +1467,28 @@ void XG::index_component_path_sets() {
     // index from the paths to their component set
     for (size_t i = 0; i < component_path_sets.size(); i++) {
         for (size_t path_rank : component_path_sets[i]) {
+            if (component_path_set_of_path[path_rank] != numeric_limits<size_t>::max()) {
+                cerr << "warning:[XG] Graph contains path " << path_name(path_rank) << " that spans multiple connected components. This path must follow edges that are not included in the graph. XG's component path set indexes may not be semantically meaningful for this graph." << endl;
+                continue;
+            }
             component_path_set_of_path[path_rank] = i;
         }
     }
 }
     
 void XG::create_succinct_component_path_sets(int_vector<>& path_ranks_iv_out, bit_vector& path_ranks_bv_out) const {
+    
+    size_t num_path_records = 0;
+    for (const auto& component_path_set : component_path_sets) {
+        num_path_records += component_path_set.size();
+    }
+    
 #ifdef debug_component_index
     cerr << "creating serializable component path sets for " << paths.size() << " paths and " << component_path_sets.size() << " components" << endl;
 #endif
-    path_ranks_iv_out = int_vector<>(paths.size());
-    path_ranks_bv_out = bit_vector(paths.size());
+    
+    path_ranks_iv_out = int_vector<>(num_path_records);
+    path_ranks_bv_out = bit_vector(num_path_records);
     
     size_t i = 0;
     for (const unordered_set<size_t>& component_path_set : component_path_sets) {
@@ -1879,6 +1917,8 @@ bool XG::follow_edges(const handle_t& handle, bool go_left, const function<bool(
 void XG::for_each_handle(const function<bool(const handle_t&)>& iteratee, bool parallel) const {
     // How big is the g vector entry size we are on?
     size_t entry_size = 0;
+    // The lambda function will let us know if we're bailing early.
+    bool stop_early = false;
     auto lambda = [&](size_t g) {
         // Make the handle
         // We need to make sure our index won't set the orientation bit.
@@ -1890,26 +1930,114 @@ void XG::for_each_handle(const function<bool(const handle_t&)>& iteratee, bool p
         // Run the iteratee
         if (!iteratee(handle)) {
             // The iteratee is bored and wants to stop.
+#pragma omp atomic write
+            stop_early = true;
             return;
         }
-    
+        
         // How many edges are there of each type on this record?
         size_t edges_to_count = g_iv[g + G_NODE_TO_COUNT_OFFSET];
         size_t edges_from_count = g_iv[g + G_NODE_FROM_COUNT_OFFSET];
         
         // This record is the header plus all the edge records it contains
         entry_size = G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * (edges_to_count + edges_from_count);
+
     };
     if (parallel) {
 #pragma omp parallel for schedule(dynamic,1)
         for (size_t g = 0; g < g_iv.size(); g += entry_size) {
             lambda(g);
+            
+            // This is hack-y, but it achieves a 'break' statement while keeping OpenMP happy.
+            if (stop_early) {
+                entry_size = g_iv.size() - g;
+            }
         }
     } else {
-        for (size_t g = 0; g < g_iv.size(); g += entry_size) {
+        for (size_t g = 0; g < g_iv.size() && !stop_early; g += entry_size) {
             lambda(g);
         }
     }
+}
+
+path_handle_t XG::get_path_handle(const string& path_name) const {
+    return as_path_handle(path_rank(path_name));
+}
+    
+string XG::get_path_name(const path_handle_t& path_handle) const {
+    return path_name(as_integer(path_handle));
+}
+    
+size_t XG::get_occurrence_count(const path_handle_t& path_handle) const {
+    return paths[as_integer(path_handle) - 1]->ids.size();
+}
+    
+size_t XG::get_path_length(const path_handle_t& path_handle) const {
+    return paths[as_integer(path_handle) - 1]->offsets.size();
+}
+    
+size_t XG::get_path_count() const {
+    return paths.size();
+}
+    
+void XG::for_each_path_handle(const function<void(const path_handle_t&)>& iteratee) const {
+    for (size_t i = 0; i < paths.size(); i++) {
+        // convert to 1-based rank
+        path_handle_t path_handle = as_path_handle(i + 1);
+        // execute function
+        iteratee(path_handle);
+    }
+}
+
+handle_t XG::get_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    const auto& xgpath = *paths[as_integer(get_path_handle_of_occurrence(occurrence_handle)) - 1];
+    size_t idx = get_ordinal_rank_of_occurrence(occurrence_handle);
+    return get_handle(xgpath.node(idx), xgpath.is_reverse(idx));
+}
+
+occurrence_handle_t XG::get_first_occurrence(const path_handle_t& path_handle) const {
+    occurrence_handle_t occurrence_handle;
+    as_integers(occurrence_handle)[0] = as_integer(path_handle);
+    as_integers(occurrence_handle)[1] = 0;
+    return occurrence_handle;
+}
+
+occurrence_handle_t XG::get_last_occurrence(const path_handle_t& path_handle) const {
+    occurrence_handle_t occurrence_handle;
+    as_integers(occurrence_handle)[0] = as_integer(path_handle);
+    as_integers(occurrence_handle)[1] = paths[as_integer(path_handle) - 1]->ids.size() - 1;
+    return occurrence_handle;
+}
+
+bool XG::has_next_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    return as_integers(occurrence_handle)[1] + 1 < paths[as_integers(occurrence_handle)[0] - 1]->ids.size();
+}
+
+bool XG::has_previous_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    return as_integers(occurrence_handle)[1] > 0;
+}
+
+occurrence_handle_t XG::get_next_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    occurrence_handle_t next_occurrence_handle;
+    as_integers(next_occurrence_handle)[0] = as_integers(occurrence_handle)[0];
+    as_integers(next_occurrence_handle)[1] = as_integers(occurrence_handle)[1] + 1;
+    return next_occurrence_handle;
+}
+
+occurrence_handle_t XG::get_previous_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    occurrence_handle_t prev_occurrence_handle;
+    as_integers(prev_occurrence_handle)[0] = as_integers(occurrence_handle)[0];
+    as_integers(prev_occurrence_handle)[1] = as_integers(occurrence_handle)[1] - 1;
+    return prev_occurrence_handle;
+
+}
+
+path_handle_t XG::get_path_handle_of_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    return as_path_handle(as_integers(occurrence_handle)[0]);
+}
+    
+size_t XG::get_ordinal_rank_of_occurrence(const occurrence_handle_t& occurrence_handle) const {
+    return as_integers(occurrence_handle)[1];
 }
 
 size_t XG::node_size() const {
@@ -1997,6 +2125,14 @@ vector<Edge> XG::edges_on_end(int64_t id) const {
         }
     }
     return edges;
+}
+
+int XG::indegree(int64_t id) const {
+  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_TO_COUNT_OFFSET];
+}
+
+int XG::outdegree(int64_t id) const {
+  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_FROM_COUNT_OFFSET];
 }
 
 size_t XG::max_node_rank(void) const {
@@ -2093,6 +2229,8 @@ Path XG::path(const string& name) const {
     Path to_return;
     // Fill in the name
     to_return.set_name(name);
+    // And the circularity flag
+    to_return.set_is_circular(xgpath.is_circular);
     
     // There's one ID entry per node visit    
     size_t total_nodes = xgpath.ids.size();
@@ -2613,6 +2751,19 @@ size_t XG::path_length(const string& name) const {
 
 size_t XG::path_length(size_t rank) const {
     return paths[rank-1]->offsets.size();
+}
+
+bool XG::path_is_circular(const string& name) const {
+    auto rank = path_rank(name);
+    if (rank == 0) {
+        // Existence checking might be slightly slower but it will be worth it in saved head scratching
+        throw runtime_error("Path \"" + name + "\" not found in xg index");
+    }
+    return paths[rank-1]->is_circular;
+}
+
+bool XG::path_is_circular(size_t rank) const {
+    return paths[rank-1]->is_circular;
 }
 
 pair<pos_t, int64_t> XG::next_path_position(pos_t pos, int64_t max_search) const {
@@ -3795,6 +3946,50 @@ pos_t XG::graph_pos_at_path_position(const string& name, size_t path_pos) const 
 Alignment XG::target_alignment(const string& name, size_t pos1, size_t pos2, const string& feature, bool is_reverse, Mapping& cigar_mapping) const {
     Alignment aln;
     const XGPath& path = *paths[path_rank(name)-1];
+    
+    if (pos2 < pos1) {
+        // Looks like we want to span the origin of a circular path
+        if (!path.is_circular) {
+            // But the path isn't circular, which is a problem
+            throw runtime_error("Cannot extract Alignment from " + to_string(pos1) +
+                " to " + to_string(pos2) + " across the junction of non-circular path " + name);
+        }
+        
+        // How long is the path?
+        auto path_len = path_length(name);
+        
+        if (pos1 >= path_len) {
+            // We want to start off the end of the path, which is no good.
+            throw runtime_error("Cannot extract Alignment starting at " + to_string(pos1) +
+                " which is past end " + to_string(path_len) + " of path " + name);
+        }
+        
+        if (pos2 > path_len) {
+            // We want to end off the end of the path, which is no good either.
+            throw runtime_error("Cannot extract Alignment ending at " + to_string(pos2) +
+                " which is past end " + to_string(path_len) + " of path " + name);
+        }
+        
+        // Split the proivided Mapping of edits at the path end/start junction
+        auto part_mappings = cut_mapping_offset(cigar_mapping, path_len - pos1);
+        
+        // We extract from pos1 to the end
+        Alignment aln1 = target_alignment(name, pos1, path_len, feature, is_reverse, part_mappings.first); 
+        
+        // And then from the start to pos2
+        Alignment aln2 = target_alignment(name, 0, pos2, feature, is_reverse, part_mappings.second); 
+        
+        if (is_reverse) {
+            // The alignments were flipped, so the second has to be first
+            return merge_alignments(aln2, aln1);
+        } else {
+            // The alignments get merged in the same order
+            return merge_alignments(aln1, aln2);
+        }
+    }
+    
+    // Otherwise, the base case is that we don't go over the circular path junction
+    
     size_t first_node_start = path.offsets_select(path.offsets_rank(pos1+1));
     int64_t trim_start = pos1 - first_node_start;
     {
@@ -3909,6 +4104,47 @@ Alignment XG::target_alignment(const string& name, size_t pos1, size_t pos2, con
 Alignment XG::target_alignment(const string& name, size_t pos1, size_t pos2, const string& feature, bool is_reverse) const {
     Alignment aln;
     const XGPath& path = *paths[path_rank(name)-1];
+    
+    if (pos2 < pos1) {
+        // Looks like we want to span the origin of a circular path
+        if (!path.is_circular) {
+            // But the path isn't circular, which is a problem
+            throw runtime_error("Cannot extract Alignment from " + to_string(pos1) +
+                " to " + to_string(pos2) + " across the junction of non-circular path " + name);
+        }
+        
+        // How long is the path?
+        auto path_len = path_length(name);
+        
+        if (pos1 >= path_len) {
+            // We want to start off the end of the path, which is no good.
+            throw runtime_error("Cannot extract Alignment starting at " + to_string(pos1) +
+                " which is past end " + to_string(path_len) + " of path " + name);
+        }
+        
+        if (pos2 > path_len) {
+            // We want to end off the end of the path, which is no good either.
+            throw runtime_error("Cannot extract Alignment ending at " + to_string(pos2) +
+                " which is past end " + to_string(path_len) + " of path " + name);
+        }
+        
+        // We extract from pos1 to the end
+        Alignment aln1 = target_alignment(name, pos1, path_len, feature, is_reverse); 
+        
+        // And then from the start to pos2
+        Alignment aln2 = target_alignment(name, 0, pos2, feature, is_reverse); 
+        
+        if (is_reverse) {
+            // The alignments were flipped, so the second has to be first
+            return merge_alignments(aln2, aln1);
+        } else {
+            // The alignments get merged in the same order
+            return merge_alignments(aln1, aln2);
+        }
+    }
+   
+    // If we get here, we do the normal non-circular path case.
+    
     size_t first_node_start = path.offsets_select(path.offsets_rank(pos1+1));
     int64_t trim_start = pos1 - first_node_start;
     {

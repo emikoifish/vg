@@ -24,11 +24,12 @@ include $(wildcard $(ALGORITHMS_OBJ_DIR)/*.d)
 include $(wildcard $(UNITTEST_OBJ_DIR)/*.d)
 include $(wildcard $(SUBCOMMAND_OBJ_DIR)/*.d)
 
-CXXFLAGS := -O3 -fopenmp -Werror=return-type -std=c++11 -ggdb -g -MMD -MP $(CXXFLAGS)
+# We don't ask for -fopenmp here because how we get it can depend on the compiler
+CXXFLAGS := -O3 -Werror=return-type -std=c++11 -ggdb -g -MMD -MP -msse4.2 $(CXXFLAGS)
 
 LD_INCLUDE_FLAGS:=-I$(CWD)/$(INC_DIR) -I. -I$(CWD)/$(SRC_DIR) -I$(CWD)/$(UNITTEST_SRC_DIR) -I$(CWD)/$(SUBCOMMAND_SRC_DIR) -I$(CWD)/$(CPP_DIR) -I$(CWD)/$(INC_DIR)/dynamic -I$(CWD)/$(INC_DIR)/sonLib $(shell pkg-config --cflags cairo)
 
-LD_LIB_FLAGS:= -L$(CWD)/$(LIB_DIR) -lvcflib -lgssw -lssw -lprotobuf -lsublinearLS -lhts -lpthread -ljansson -lncurses -lgcsa2 -lgbwt -ldivsufsort -ldivsufsort64 -lvcfh -lgfakluge -lraptor2 -lsdsl -lpinchesandcacti -l3edgeconnected -lsonlib -lfml -llz4 -lstructures -lvw -lboost_program_options -lallreduce
+LD_LIB_FLAGS:= -L$(CWD)/$(LIB_DIR) -lvcflib -lgssw -lssw -lprotobuf -lsublinearLS -lhts -ldeflate -lpthread -ljansson -lncurses -lgcsa2 -lgbwt -ldivsufsort -ldivsufsort64 -lvcfh -lgfakluge -lraptor2 -lsdsl -lpinchesandcacti -l3edgeconnected -lsonlib -lfml -llz4 -lstructures -lvw -lboost_program_options -lallreduce
 # Use pkg-config to find Cairo and all the libs it uses
 LD_LIB_FLAGS += $(shell pkg-config --libs --static cairo)
 
@@ -38,12 +39,37 @@ ifeq ($(shell uname -s),Darwin)
     # TODO: where does Homebrew keep libraries?
     ifeq ($(shell if [ -d /opt/local/lib ];then echo 1;else echo 0;fi), 1)
         # Use /opt/local/lib if present
-	    LD_LIB_FLAGS += -L/opt/local/lib
+        LD_LIB_FLAGS += -L/opt/local/lib
     endif
 
     ifeq ($(shell if [ -d /usr/local/lib ];then echo 1;else echo 0;fi), 1)
         # Use /usr/local/lib if present.
         LD_LIB_FLAGS += -L/usr/local/lib
+    endif
+
+    # Our compiler might be clang that lacks -fopenmp support.
+    # Sniff that
+    ifeq ($(strip $(shell $(CXX) -fopenmp /dev/null -o/dev/null 2>&1 | grep fopenmp | wc -l)), 1)
+		# The compiler complained about fopenmp instead of its nonsense input file.
+        # We need to use the hard way of getting OpenMP not bundled with the compiler.
+        # The compiler only needs to do the preprocessing
+        CXXFLAGS += -Xpreprocessor -fopenmp
+
+        ifeq ($(shell if [ -d /opt/local/lib/libomp ];then echo 1;else echo 0;fi), 1)
+            # Use /opt/local/lib/libomp if present, because Macports installs libomp there.
+            # Brew is supposed to put it somewhere the compiler can find it by default.
+            LD_LIB_FLAGS += -L/opt/local/lib/libomp
+            # And we need to find the includes. Homebrew puts them in the normal place
+            # but Macports hides them in "libomp"
+            CXXFLAGS += -I/opt/local/include/libomp
+        endif
+
+        # We also need to link it
+        LD_LIB_FLAGS += -lomp
+        # And we need to find the includes. Homebrew puts them in the normal place but macports hides them in "libomp"
+        CXXFLAGS += -I/opt/local/include/libomp
+    else
+        CXXFLAGS += -fopenmp
     endif
 
 else
@@ -56,6 +82,9 @@ else
 
 	# We want to link against the elfutils libraries
 	LD_LIB_FLAGS += -ldwfl -ldw -ldwelf -lelf -lebl
+
+    # We get OpenMP the normal way, using whatever the compiler knows about
+    CXXFLAGS += -fopenmp
 endif
 
 # These libs need to come after libdw if used, because libdw depends on them
@@ -128,6 +157,7 @@ BACKWARD_CPP_DIR:=deps/backward-cpp
 ELFUTILS_DIR:=deps/elfutils
 BOOST_DIR:=deps/boost-subset
 VOWPALWABBIT_DIR:=deps/vowpal_wabbit
+LIBDEFLATE_DIR:=deps/libdeflate
 
 # Dependencies that go into libvg's archive
 # These go in libvg but come from dependencies
@@ -164,6 +194,7 @@ LIB_DEPS += $(LIB_DIR)/libstructures.a
 LIB_DEPS += $(LIB_DIR)/libvw.a
 LIB_DEPS += $(LIB_DIR)/liballreduce.a
 LIB_DEPS += $(LIB_DIR)/libboost_program_options.a
+LIB_DEPS += $(LIB_DIR)/libdeflate.a
 ifneq ($(shell uname -s),Darwin)
 	# On non-Mac (i.e. Linux), where ELF binaries are used, pull in libdw which
 	# backward-cpp will use.
@@ -212,12 +243,12 @@ get-deps:
 # And we have submodule deps to build
 deps: $(DEPS)
 
-test: $(BIN_DIR)/vg $(LIB_DIR)/libvg.a test/build_graph $(BIN_DIR)/shuf
+test: $(BIN_DIR)/vg $(LIB_DIR)/libvg.a test/build_graph $(BIN_DIR)/shuf $(VCFLIB_DIR)/bin/vcf2tsv $(FASTAHACK_DIR)/fastahack
 	. ./source_me.sh && cd test && prove -v t
 
 docs: $(SRC_DIR)/*.cpp $(SRC_DIR)/*.hpp $(SUBCOMMAND_SRC_DIR)/*.cpp $(SUBCOMMAND_SRC_DIR)/*.hpp $(UNITTEST_SRC_DIR)/*.cpp $(UNITTEST_SRC_DIR)/*.hpp $(CPP_DIR)/vg.pb.cc
 	doxygen
-	cd doc && sphinx-build -b html . sphinx
+	echo "View documentation at: file://$(PWD)/doc/doxygen/index.html"
 
 # Hack to use gshuf or shuf as appropriate to the platform when testing
 $(BIN_DIR)/shuf:
@@ -227,14 +258,9 @@ else
 	ln -s `which shuf` $(BIN_DIR)/shuf
 endif
 
-# Make sure we have protoc built, and the protobuf lib, both of which come from the same command using this fake intermediate
-bin/protoc: .rebuild-protobuf
-$(LIB_DIR)/libprotobuf.a: .rebuild-protobuf
-	# intermediate targets don't trigger a rebuild just because they're missing.
-.INTERMEDIATE: .rebuild-protobuf
-	# Make sure to delete outdated libs and headers before rebuilding
-	# Outdated headers can get picked up during the build
-.rebuild-protobuf: deps/protobuf/src/google/protobuf/*.cc
+# Make sure we have protoc built, and the protobuf lib
+bin/protoc: $(LIB_DIR)/libprotobuf.a
+$(LIB_DIR)/libprotobuf.a: deps/protobuf/src/google/protobuf/*.cc
 	rm -rf $(LIB_DIR)/libprotobuf* $(LIB_DIR)/libprotoc*
 	rm -Rf include/google/protobuf/
 	+. ./source_me.sh && cd $(PROTOBUF_DIR) && ./autogen.sh && export DIST_LANG=cpp && ./configure --prefix="$(CWD)" $(FILTER) && $(MAKE) $(FILTER) && $(MAKE) install && export PATH=$(CWD)/bin:$$PATH
@@ -262,7 +288,7 @@ $(LIB_DIR)/libssw.a: $(SSW_DIR)/*.c $(SSW_DIR)/*.h
 	+. ./source_me.sh && cd $(SSW_DIR) && $(MAKE) $(FILTER) && ar rs $(CWD)/$(LIB_DIR)/libssw.a ssw.o ssw_cpp.o && cp ssw_cpp.h ssw.h $(CWD)/$(LIB_DIR)
 
 $(LIB_DIR)/libsnappy.a: $(SNAPPY_DIR)/*.cc $(SNAPPY_DIR)/*.h
-	+. ./source_me.sh && cd $(SNAPPY_DIR) && ./autogen.sh && ./configure --prefix=$(CWD) $(FILTER) && $(MAKE) $(FILTER) && $(MAKE) install
+	+. ./source_me.sh && cd $(SNAPPY_DIR) && ./autogen.sh && ./configure --prefix=$(CWD) $(FILTER) && $(MAKE) libsnappy.la $(FILTER) && cp .libs/libsnappy.a $(CWD)/lib/ && cp snappy-c.h snappy-sinksource.h snappy-stubs-public.h snappy.h $(CWD)/include/
 
 $(LIB_DIR)/librocksdb.a: $(LIB_DIR)/libtcmalloc_minimal.a $(LIB_DIR)/libsnappy.a $(ROCKSDB_DIR)/db/*.cc $(ROCKSDB_DIR)/db/*.h
 	+. ./source_me.sh && cd $(ROCKSDB_DIR) && $(ROCKSDB_PORTABLE) DISABLE_JEMALLOC=1 $(MAKE) static_lib $(FILTER) && mv librocksdb.a $(CWD)/${LIB_DIR}/ && cp -r include/* $(CWD)/$(INC_DIR)/
@@ -279,9 +305,9 @@ endif
 $(INC_DIR)/gbwt/dynamic_gbwt.h: $(LIB_DIR)/libgbwt.a
 $(LIB_DIR)/libgbwt.a: $(LIB_DIR)/libsdsl.a $(wildcard $(GBWT_DIR)/*.cpp) $(wildcard $(GBWT_DIR)/include/gbwt/*.h)
 ifeq ($(shell uname -s),Darwin)
-	+. ./source_me.sh && cd $(GBWT_DIR) && AS_INTEGRATED_ASSEMBLER=1 $(MAKE) libgbwt.a $(FILTER) && mv libgbwt.a $(CWD)/$(LIB_DIR) && cp -r include/gbwt $(CWD)/$(INC_DIR)/
+	+. ./source_me.sh && cd $(GBWT_DIR) && AS_INTEGRATED_ASSEMBLER=1 $(MAKE) libgbwt.a build_gbwt $(FILTER) && mv libgbwt.a $(CWD)/$(LIB_DIR) && cp -r include/gbwt $(CWD)/$(INC_DIR)/
 else
-	+. ./source_me.sh && cd $(GBWT_DIR) && $(MAKE) libgbwt.a $(FILTER) && mv libgbwt.a $(CWD)/$(LIB_DIR) && cp -r include/gbwt $(CWD)/$(INC_DIR)/
+	+. ./source_me.sh && cd $(GBWT_DIR) && $(MAKE) libgbwt.a build_gbwt $(FILTER) && mv libgbwt.a $(CWD)/$(LIB_DIR) && cp -r include/gbwt $(CWD)/$(INC_DIR)/
 endif
 
 $(INC_DIR)/progress_bar.hpp: $(PROGRESS_BAR_DIR)/progress_bar.hpp
@@ -293,11 +319,24 @@ $(OBJ_DIR)/progress_bar.o: $(PROGRESS_BAR_DIR)/*.hpp $(PROGRESS_BAR_DIR)/*.cpp
 $(OBJ_DIR)/Fasta.o: $(FASTAHACK_DIR)/*.h $(FASTAHACK_DIR)/*.cpp
 	+cd $(FASTAHACK_DIR) && $(MAKE) $(FILTER) && mv Fasta.o $(CWD)/$(OBJ_DIR) && cp Fasta.h $(CWD)/$(INC_DIR)
 
-$(LIB_DIR)/libhts.a: $(HTSLIB_DIR)/*.c $(HTSLIB_DIR)/*.h
-	+cd $(HTSLIB_DIR) && $(MAKE) lib-static $(FILTER) && mv libhts.a $(CWD)/$(LIB_DIR) && cp *.h $(CWD)/$(INC_DIR) && cp -r htslib $(CWD)/$(INC_DIR)/
+$(LIB_DIR)/libdeflate.a: $(LIBDEFLATE_DIR)/*.h $(LIBDEFLATE_DIR)/lib/*.h $(LIBDEFLATE_DIR)/lib/*/*.h $(LIBDEFLATE_DIR)/lib/*.c $(LIBDEFLATE_DIR)/lib/*/*.c
+	+cd $(LIBDEFLATE_DIR) && $(MAKE) $(FILTER) && cp libdeflate.a $(CWD)/$(LIB_DIR) && cp libdeflate.h $(CWD)/$(INC_DIR)
 
-$(LIB_DIR)/libvcflib.a: $(VCFLIB_DIR)/src/*.cpp $(VCFLIB_DIR)/src/*.hpp $(VCFLIB_DIR)/intervaltree/*.cpp $(VCFLIB_DIR)/intervaltree/*.h $(VCFLIB_DIR)/tabixpp/*.cpp $(VCFLIB_DIR)/tabixpp/*.hpp $(VCFLIB_DIR)/tabixpp/htslib/*.c $(VCFLIB_DIR)/tabixpp/htslib/htslib/*.h $(VCFLIB_DIR)/tabixpp/htslib/cram/*.c $(VCFLIB_DIR)/tabixpp/htslib/cram/*.h
-	+. ./source_me.sh && cd $(VCFLIB_DIR) && $(MAKE) libvcflib.a $(FILTER) && cp lib/* $(CWD)/$(LIB_DIR)/ && cp include/* $(CWD)/$(INC_DIR)/ && cp intervaltree/*.h $(CWD)/$(INC_DIR)/ && cp src/*.h* $(CWD)/$(INC_DIR)/
+# We clear out the include/htslib/* headers because they may be cached and out of date and confuse the build.
+# Also we build after libdeflate so it can be used
+$(LIB_DIR)/libhts.a: $(LIB_DIR)/libdeflate.a $(HTSLIB_DIR)/*.c $(HTSLIB_DIR)/*.h $(HTSLIB_DIR)/htslib/*.h $(HTSLIB_DIR)/cram/*.c $(HTSLIB_DIR)/cram/*.h
+	+rm -Rf $(CWD)/$(INC_DIR)/htslib $(CWD)/$(LIB_DIR)/libhts.a
+	+cd $(HTSLIB_DIR) && autoheader && autoconf && CFLAGS="-I$(CWD)/$(INC_DIR)" LDFLAGS="-L$(CWD)/$(LIB_DIR)" ./configure --with-libdeflate --disable-s3 --disable-gcs --disable-libcurl --disable-plugins $(FILTER) && $(MAKE) lib-static $(FILTER) && cp libhts.a $(CWD)/$(LIB_DIR) && cp *.h $(CWD)/$(INC_DIR) && cp -r htslib $(CWD)/$(INC_DIR)/
+
+# We tell the vcflib build to use our own htslib
+$(LIB_DIR)/libvcflib.a: $(LIB_DIR)/libhts.a $(VCFLIB_DIR)/src/*.cpp $(VCFLIB_DIR)/src/*.hpp $(VCFLIB_DIR)/intervaltree/*.cpp $(VCFLIB_DIR)/intervaltree/*.h $(VCFLIB_DIR)/tabixpp/*.cpp $(VCFLIB_DIR)/tabixpp/*.hpp
+	+. ./source_me.sh && cd $(VCFLIB_DIR) && HTS_LIB="$(CWD)/$(LIB_DIR)/libhts.a" HTS_INCLUDES="-I$(CWD)/$(INC_DIR)" HTS_LDFLAGS="-L$(CWD)/$(LIB_DIR) -lhts -lpthread -lm -lbz2 -llzma -lz -ldeflate" $(MAKE) libvcflib.a $(FILTER) && cp lib/* $(CWD)/$(LIB_DIR)/ && cp include/* $(CWD)/$(INC_DIR)/ && cp intervaltree/*.h $(CWD)/$(INC_DIR)/ && cp src/*.h* $(CWD)/$(INC_DIR)/
+    
+$(VCFLIB_DIR)/bin/vcf2tsv: $(VCFLIB_DIR)/src/*.cpp $(VCFLIB_DIR)/src/*.h $(LIB_DIR)/libvcflib.a
+	+. ./source_me.sh && cd $(VCFLIB_DIR) && HTS_LIB="$(CWD)/$(LIB_DIR)/libhts.a" HTS_INCLUDES="-I$(CWD)/$(INC_DIR)" HTS_LDFLAGS="-L$(CWD)/$(LIB_DIR) -lhts -lpthread -lm -lbz2 -llzma -lz -ldeflate" $(MAKE) vcf2tsv $(FILTER)
+
+$(FASTAHACK_DIR)/fastahack: $(FASTAHACK_DIR)/*.c $(FASTAHACK_DIR)/*.h $(FASTAHACK_DIR)/*.cpp
+	+cd $(FASTAHACK_DIR) && $(MAKE) $(FILTER)
 
 $(LIB_DIR)/libgssw.a: $(GSSW_DIR)/src/gssw.c $(GSSW_DIR)/src/gssw.h
 	+cd $(GSSW_DIR) && $(MAKE) $(FILTER) && cp lib/* $(CWD)/$(LIB_DIR)/ && cp obj/* $(CWD)/$(OBJ_DIR) && cp src/*.h $(CWD)/$(INC_DIR)
@@ -394,6 +433,7 @@ $(OBJ_DIR)/sha1.o: $(SHA1_DIR)/sha1.cpp $(SHA1_DIR)/sha1.hpp
 $(LIB_DIR)/libfml.a: $(FERMI_DIR)/*.h $(FERMI_DIR)/*.c
 	cd $(FERMI_DIR) && $(MAKE) $(FILTER) && cp *.h $(CWD)/$(INC_DIR)/ && cp libfml.a $(CWD)/$(LIB_DIR)/
 
+# We don't need to hack the build to point at our htslib because sublinearLS gets its htslib from the include flags we set
 $(LIB_DIR)/libsublinearLS.a: $(LINLS_DIR)/src/*.cpp $(LINLS_DIR)/src/*.hpp $(LIB_DIR)/libhts.a
 	cd $(LINLS_DIR) && INCLUDE_FLAGS="-I$(CWD)/$(INC_DIR)" $(MAKE) libs $(FILTER) && cp lib/libsublinearLS.a $(CWD)/$(LIB_DIR)/ && mkdir -p $(CWD)/$(INC_DIR)/sublinearLS && cp src/*.hpp $(CWD)/$(INC_DIR)/sublinearLS/
 
@@ -510,20 +550,33 @@ clean: clean-rocksdb clean-protobuf clean-vcflib
 	$(RM) -r $(INC_DIR)
 	$(RM) -r $(CPP_DIR)
 	$(RM) -r share/
+	cd $(DEP_DIR) && cd sonLib && $(MAKE) clean
 	cd $(DEP_DIR) && cd sparsehash && $(MAKE) clean
 	cd $(DEP_DIR) && cd htslib && $(MAKE) clean
 	cd $(DEP_DIR) && cd fastahack && $(MAKE) clean
 	cd $(DEP_DIR) && cd gcsa2 && $(MAKE) clean
 	cd $(DEP_DIR) && cd gbwt && $(MAKE) clean
 	cd $(DEP_DIR) && cd gssw && $(MAKE) clean
+	cd $(DEP_DIR) && cd ssw && cd src && $(MAKE) clean
 	cd $(DEP_DIR) && cd progress_bar && $(MAKE) clean
 	cd $(DEP_DIR) && cd sdsl-lite && ./uninstall.sh || true
 	cd $(DEP_DIR) && cd libVCFH && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd fastahack && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd fsom && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd libVCFH && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd smithwaterman && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd test && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd filevercmp && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd intervaltree && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd multichoose && $(MAKE) clean
+	cd $(DEP_DIR) && cd vcflib && cd tabixpp && $(MAKE) clean
 	cd $(DEP_DIR) && cd gfakluge && $(MAKE) clean
 	cd $(DEP_DIR) && cd sha1 && $(MAKE) clean
 	cd $(DEP_DIR) && cd structures && $(MAKE) clean
 	cd $(DEP_DIR) && cd gperftools && $(MAKE) clean
 	cd $(DEP_DIR) && cd vowpal_wabbit && $(MAKE) clean
+	cd $(DEP_DIR) && cd sublinear-Li-Stephens && $(MAKE) clean
 	rm -Rf $(RAPTOR_DIR)/build/*
 	## TODO vg source code
 	## TODO LRU_CACHE

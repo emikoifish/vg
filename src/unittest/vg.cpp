@@ -144,126 +144,6 @@ TEST_CASE("is_acyclic() should return whether the graph is acyclic", "[vg][cycle
         REQUIRE(graph.is_acyclic() == true);
     }
 }
-    TEST_CASE("split_strands() should properly split the forward and reverse strands", "[vg][split]") {
-        const string graph_json = R"(
-        {
-            "node": [
-                     {"sequence": "ATA","id": 1},
-                     {"sequence": "CT","id": 2},
-                     {"sequence": "TGA","id": 3}
-                     ],
-            "edge": [
-                     {"from": 1,"to": 2},
-                     {"from": 3,"to": 2, "to_end": true, "from_start": true},
-                     {"from": 1,"to": 2, "to_end": true},
-                     {"from": 2,"to": 3, "from_start": true}
-                     ]
-        }
-        )";
-        
-        VG graph = string_to_graph(graph_json);
-        
-        unordered_map<id_t, pair<id_t, bool> > node_translation;
-        VG split = graph.split_strands(node_translation);
-        
-        Graph& g = split.graph;
-                
-        REQUIRE(g.node_size() == 6);
-        REQUIRE(g.edge_size() == 8);
-        
-        int64_t node_1 = 0;
-        int64_t node_2 = 0;
-        int64_t node_3 = 0;
-        int64_t node_4 = 0;
-        int64_t node_5 = 0;
-        int64_t node_6 = 0;
-        
-        for (int i = 0; i < g.node_size(); i++) {
-            const Node& n = g.node(i);
-            int64_t orig_id = node_translation[n.id()].first;
-            bool flipped =  node_translation[n.id()].second;
-            if (orig_id == 1 && !flipped && n.sequence() == graph.get_node(orig_id)->sequence()) {
-                node_1 = n.id();
-            }
-            else if (orig_id == 1 && flipped && n.sequence() == reverse_complement(graph.get_node(orig_id)->sequence())) {
-                node_2 = n.id();
-            }
-            else if (orig_id == 2 && !flipped && n.sequence() == graph.get_node(orig_id)->sequence()) {
-                node_3 = n.id();
-            }
-            else if (orig_id == 2 && flipped && n.sequence() == reverse_complement(graph.get_node(orig_id)->sequence())) {
-                node_4 = n.id();
-            }
-            else if (orig_id == 3 && !flipped && n.sequence() == graph.get_node(orig_id)->sequence()) {
-                node_5 = n.id();
-            }
-            else if (orig_id == 3 && flipped && n.sequence() == reverse_complement(graph.get_node(orig_id)->sequence())) {
-                node_6 = n.id();
-            }
-        }
-        
-        REQUIRE(node_1 != 0);
-        REQUIRE(node_2 != 0);
-        REQUIRE(node_3 != 0);
-        REQUIRE(node_4 != 0);
-        REQUIRE(node_5 != 0);
-        REQUIRE(node_6 != 0);
-        
-        bool found_edge_1 = false;
-        bool found_edge_2 = false;
-        bool found_edge_3 = false;
-        bool found_edge_4 = false;
-        bool found_edge_5 = false;
-        bool found_edge_6 = false;
-        bool found_edge_7 = false;
-        bool found_edge_8 = false;
-        
-        for (int i = 0; i < g.edge_size(); i++) {
-            const Edge& e = g.edge(i);
-            if ((e.from() == node_1 && e.to() == node_3 && !e.from_start() && !e.to_end()) ||
-                (e.from() == node_3 && e.to() == node_1 && e.from_start() && e.to_end())) {
-                found_edge_1 = true;
-            }
-            else if ((e.from() == node_1 && e.to() == node_4 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_4 && e.to() == node_1 && e.from_start() && e.to_end())) {
-                found_edge_2 = true;
-            }
-            else if ((e.from() == node_6 && e.to() == node_3 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_3 && e.to() == node_6 && e.from_start() && e.to_end())) {
-                found_edge_3 = true;
-            }
-            else if ((e.from() == node_6 && e.to() == node_4 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_4 && e.to() == node_6 && e.from_start() && e.to_end())) {
-                found_edge_4 = true;
-            }
-            else if ((e.from() == node_3 && e.to() == node_5 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_5 && e.to() == node_3 && e.from_start() && e.to_end())) {
-                found_edge_5 = true;
-            }
-            else if ((e.from() == node_3 && e.to() == node_2 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_2 && e.to() == node_3 && e.from_start() && e.to_end())) {
-                found_edge_6 = true;
-            }
-            else if ((e.from() == node_4 && e.to() == node_5 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_5 && e.to() == node_4 && e.from_start() && e.to_end())) {
-                found_edge_7 = true;
-            }
-            else if ((e.from() == node_4 && e.to() == node_2 && !e.from_start() && !e.to_end()) ||
-                     (e.from() == node_2 && e.to() == node_4 && e.from_start() && e.to_end())) {
-                found_edge_8 = true;
-            }
-        }
-        
-        REQUIRE(found_edge_1);
-        REQUIRE(found_edge_2);
-        REQUIRE(found_edge_3);
-        REQUIRE(found_edge_4);
-        REQUIRE(found_edge_5);
-        REQUIRE(found_edge_6);
-        REQUIRE(found_edge_7);
-        REQUIRE(found_edge_8);
-    }
-    
 
 TEST_CASE("unfold() should properly unfold a graph out to the requested length", "[vg][unfold]") {
 
@@ -1758,248 +1638,6 @@ TEST_CASE("edit() should not get confused even under very confusing circumstance
     
 }
 
-TEST_CASE("is_directed_acyclic() should return whether the graph is directed acyclic", "[vg][cycles]") {
-    
-    SECTION("is_directed_acyclic() works on a single node") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        
-        // the graph has no edges
-        REQUIRE(vg.is_directed_acyclic());
-        
-        vg.create_edge(n0, n0, false, true);
-        
-        // the graph has a reversing cycle, but no directed cycles
-        REQUIRE(vg.is_directed_acyclic());
-        
-        vg.create_edge(n0, n0, true, false);
-        
-        // the graph now has a directed cycle
-        REQUIRE(!vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on DAG with only simple edges") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        Node* n4 = vg.create_node("A");
-        Node* n5 = vg.create_node("A");
-        Node* n6 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        vg.create_edge(n0, n2);
-        vg.create_edge(n2, n3);
-        vg.create_edge(n1, n3);
-        vg.create_edge(n3, n4);
-        vg.create_edge(n0, n4);
-        vg.create_edge(n4, n5);
-        vg.create_edge(n0, n5);
-        vg.create_edge(n4, n6);
-        vg.create_edge(n3, n6);
-        
-        REQUIRE(vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on DAG with some doubly reversing edges") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        Node* n4 = vg.create_node("A");
-        Node* n5 = vg.create_node("A");
-        Node* n6 = vg.create_node("A");
-        
-        vg.create_edge(n1, n0, true, true);
-        vg.create_edge(n0, n2);
-        vg.create_edge(n2, n3);
-        vg.create_edge(n3, n1, true, true);
-        vg.create_edge(n4, n3, true, true);
-        vg.create_edge(n0, n4);
-        vg.create_edge(n4, n5);
-        vg.create_edge(n0, n5);
-        vg.create_edge(n6, n4, true, true);
-        vg.create_edge(n3, n6);
-        
-        REQUIRE(vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on DAG with doubly reversing and singly reversing eges") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        Node* n4 = vg.create_node("A");
-        Node* n5 = vg.create_node("A");
-        Node* n6 = vg.create_node("A");
-        
-        vg.create_edge(n1, n0, true, true);
-        vg.create_edge(n0, n2, false, true);
-        vg.create_edge(n2, n3, true, false);
-        vg.create_edge(n3, n1, true, true);
-        vg.create_edge(n4, n3, true, true);
-        vg.create_edge(n0, n4);
-        vg.create_edge(n4, n5, false, true);
-        vg.create_edge(n0, n5, false, true);
-        vg.create_edge(n6, n4, true, true);
-        vg.create_edge(n3, n6);
-        
-        REQUIRE(vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on a non trivial graph a reversing cycle but no directed cycles") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        vg.create_edge(n1, n2);
-        vg.create_edge(n1, n3);
-        vg.create_edge(n2, n3, false, true);
-        
-        REQUIRE(vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on a simple directed cycle") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        vg.create_edge(n1, n2);
-        vg.create_edge(n2, n0);
-        
-        REQUIRE(!vg.is_directed_acyclic());
-    }
-    
-    SECTION("is_directed_acyclic() works on a non trivial graph with a directed cycle") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        Node* n4 = vg.create_node("A");
-        Node* n5 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        vg.create_edge(n1, n2);
-        vg.create_edge(n2, n0);
-        vg.create_edge(n0, n3);
-        vg.create_edge(n1, n4);
-        vg.create_edge(n2, n5);
-        
-        REQUIRE(!vg.is_directed_acyclic());
-    }
-}
-
-TEST_CASE("lazy_sort() should put a DAG in topological order", "[vg][sort]") {
-    
-    SECTION("lazy_sort() works on a simple graph that's already in topological order") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        
-        vg.lazy_sort();
-        
-        unordered_map<id_t, size_t> id_to_idx;
-        for (size_t i = 0; i < vg.graph.node_size(); i++) {
-            id_to_idx[vg.graph.node(i).id()] = i;
-        }
-        
-        for (size_t i = 0; i < vg.graph.edge_size(); i++) {
-            const Edge& e = vg.graph.edge(i);
-            REQUIRE(id_to_idx[e.from()] < id_to_idx[e.to()]);
-        }
-    }
-    
-    SECTION("lazy_sort() works on a simple graph that's not already in topological order") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        
-        vg.create_edge(n1, n0);
-        
-        vg.lazy_sort();
-        
-        unordered_map<id_t, size_t> id_to_idx;
-        for (size_t i = 0; i < vg.graph.node_size(); i++) {
-            id_to_idx[vg.graph.node(i).id()] = i;
-        }
-        
-        for (size_t i = 0; i < vg.graph.edge_size(); i++) {
-            const Edge& e = vg.graph.edge(i);
-            REQUIRE(id_to_idx[e.from()] < id_to_idx[e.to()]);
-        }
-    }
-    
-    SECTION("lazy_sort() works on a more complex graph that's not already in topological order") {
-        
-        VG vg;
-        
-        Node* n0 = vg.create_node("A");
-        Node* n9 = vg.create_node("A");
-        Node* n2 = vg.create_node("A");
-        Node* n1 = vg.create_node("A");
-        Node* n4 = vg.create_node("A");
-        Node* n8 = vg.create_node("A");
-        Node* n5 = vg.create_node("A");
-        Node* n3 = vg.create_node("A");
-        Node* n7 = vg.create_node("A");
-        Node* n6 = vg.create_node("A");
-        
-        vg.create_edge(n0, n1);
-        vg.create_edge(n0, n3);
-        vg.create_edge(n0, n8);
-        vg.create_edge(n1, n2);
-        vg.create_edge(n1, n9);
-        vg.create_edge(n2, n5);
-        vg.create_edge(n3, n4);
-        vg.create_edge(n3, n7);
-        vg.create_edge(n5, n6);
-        vg.create_edge(n5, n8);
-        vg.create_edge(n6, n8);
-        vg.create_edge(n8, n9);
-        
-        vg.lazy_sort();
-        
-        unordered_map<id_t, size_t> id_to_idx;
-        for (size_t i = 0; i < vg.graph.node_size(); i++) {
-            id_to_idx[vg.graph.node(i).id()] = i;
-        }
-        
-        for (size_t i = 0; i < vg.graph.edge_size(); i++) {
-            const Edge& e = vg.graph.edge(i);
-            REQUIRE(id_to_idx[e.from()] < id_to_idx[e.to()]);
-        }
-    }
-}
-
 TEST_CASE("reverse_complement_graph() produces expected results", "[vg]") {
     
     SECTION("reverse_complement_graph() works") {
@@ -2126,6 +1764,227 @@ TEST_CASE("create_handle() correctly creates handles using given sequence and id
     REQUIRE(vg.get_sequence(h3) == "CA");
     
 }
+
+TEST_CASE("normalize() can join nodes and merge siblings", "[vg][normalize]") {
+
+    SECTION("Two redundant SNP values should be merged") {
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "T"},
+                {"id": 3, "sequence": "T"},
+                {"id": 4, "sequence": "G"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2},
+                {"from": 1, "to": 3},
+                {"from": 1, "to": 4},
+                {"from": 2, "to": 5},
+                {"from": 3, "to": 5},
+                {"from": 4, "to": 5}
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // One of the two alternative Ts should have been eliminated
+        REQUIRE(graph.node_size() == 4);
+        
+    }
+    
+    SECTION("Leading identical sequences should be condensed") {
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "TTA"},
+                {"id": 3, "sequence": "TTC"},
+                {"id": 4, "sequence": "GGG"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2},
+                {"from": 1, "to": 3},
+                {"from": 1, "to": 4},
+                {"from": 2, "to": 5},
+                {"from": 3, "to": 5},
+                {"from": 4, "to": 5}
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // Those duplicate Ts should be eliminated
+        REQUIRE(graph.length() == 13);
+        
+    }
+    
+    SECTION("Multiple families of leading identical sequences should be condensed") {
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "TTA"},
+                {"id": 3, "sequence": "TTC"},
+                {"id": 4, "sequence": "GGG"},
+                {"id": 6, "sequence": "GGT"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2},
+                {"from": 1, "to": 3},
+                {"from": 1, "to": 4},
+                {"from": 1, "to": 6},
+                {"from": 2, "to": 5},
+                {"from": 3, "to": 5},
+                {"from": 4, "to": 5},
+                {"from": 6, "to": 5}
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // Those duplicate Ts and Gs should be eliminated
+        REQUIRE(graph.length() == 14);
+        
+    }
+    
+    SECTION("Multiple families of trailing identical sequences should be condensed") {
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "ATT"},
+                {"id": 3, "sequence": "CTT"},
+                {"id": 4, "sequence": "GGG"},
+                {"id": 6, "sequence": "TGG"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2},
+                {"from": 1, "to": 3},
+                {"from": 1, "to": 4},
+                {"from": 1, "to": 6},
+                {"from": 2, "to": 5},
+                {"from": 3, "to": 5},
+                {"from": 4, "to": 5},
+                {"from": 6, "to": 5}
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // Those duplicate Ts and Gs should be eliminated
+        REQUIRE(graph.length() == 14);
+        
+    }
+}
+
+// TODO: This test case won't pass because VG::simplify_siblings() still thinks
+// about "from" and "to" siblings, and doesn't really understand reversing
+// edges. It doesn't see any siblings in these cases right now.
+#ifdef test_reversing_siblings
+TEST_CASE("normalize() can join nodes and merge siblings when nodes are backward", "[vg][normalize]") {
+
+    SECTION("Leading identical sequences should be condensed even when nodes are backward") {
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "TAA"},
+                {"id": 3, "sequence": "GAA"},
+                {"id": 4, "sequence": "CCC"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2, "to_end": true},
+                {"from": 1, "to": 3, "to_end": true},
+                {"from": 1, "to": 4, "to_end": true},
+                {"from": 2, "to": 5, "from_start": true},
+                {"from": 3, "to": 5, "from_start": true},
+                {"from": 4, "to": 5, "from_start": true}
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // Those duplicate Ts (actually As) should be eliminated
+        REQUIRE(graph.length() == 13);
+        
+        bool found = false;
+        graph.for_each_node([&](const Node* n) {
+            if (n->sequence() == "AA") {
+                found = true;
+            }
+        });
+        // They ought to have been combined into an AA node.
+        REQUIRE(found);
+        
+    }
+
+    SECTION("Leading and trailing identical sequences should be condensed correctly when nodes are backward and all siblings match") {
+        // TODO: We don't support mixed orientations. But we should support all-backward.
+    
+        const string graph_json = R"(
+        
+        {
+            "node": [
+                {"id": 1, "sequence": "GAT"},
+                {"id": 2, "sequence": "CTAA"},
+                {"id": 3, "sequence": "CGAA"},
+                {"id": 5, "sequence": "ACA"}
+            ],
+            "edge": [
+                {"from": 1, "to": 2, "to_end": true},
+                {"from": 1, "to": 3, "to_end": true},
+                {"from": 2, "to": 5, "from_start": true},
+                {"from": 3, "to": 5, "from_start": true},
+            ]
+        }
+    
+        )";
+        
+        VG graph = string_to_graph(graph_json);
+        graph.normalize();
+        
+        // Those duplicate Ts (actually As) and Gs (actually Cs) should be eliminated
+        REQUIRE(graph.length() == 11);
+        
+        bool found = false;
+        graph.for_each_node([&](const Node* n) {
+            if (n->sequence() == "AA") {
+                found = true;
+            }
+        });
+        // The Ts ought to have been combined into an AA node.
+        REQUIRE(found);
+        
+    }
+
+}
+#endif
 
 }
 }

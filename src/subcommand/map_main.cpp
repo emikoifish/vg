@@ -16,72 +16,75 @@ void help_map(char** argv) {
          << "Align reads to a graph." << endl
          << endl
          << "graph/index:" << endl
-         << "    -d, --base-name BASE    use BASE.xg and BASE.gcsa as the input index pair" << endl
-         << "    -x, --xg-name FILE      use this xg index (defaults to <graph>.vg.xg)" << endl
-         << "    -g, --gcsa-name FILE    use this GCSA2 index (defaults to <graph>" << gcsa::GCSA::EXTENSION << ")" << endl
-         << "    -1, --gbwt-name FILE    use this GBWT haplotype index (defaults to <graph>"<<gbwt::GBWT::EXTENSION << ")" << endl
+         << "    -d, --base-name BASE          use BASE.xg and BASE.gcsa as the input index pair" << endl
+         << "    -x, --xg-name FILE            use this xg index (defaults to <graph>.vg.xg)" << endl
+         << "    -g, --gcsa-name FILE          use this GCSA2 index (defaults to <graph>" << gcsa::GCSA::EXTENSION << ")" << endl
+         << "    -1, --gbwt-name FILE          use this GBWT haplotype index (defaults to <graph>"<<gbwt::GBWT::EXTENSION << ")" << endl
          << "algorithm:" << endl
-         << "    -t, --threads N         number of compute threads to use" << endl
-         << "    -k, --min-mem INT       minimum MEM length (if 0 estimate via -e) [0]" << endl
-         << "    -e, --mem-chance FLOAT  set {-k} such that this fraction of {-k} length hits will by chance [5e-4]" << endl
-         << "    -c, --hit-max N         ignore MEMs who have >N hits in our index (0 for no limit) [2048]" << endl
-         << "    -Y, --max-mem INT       ignore mems longer than this length (unset if 0) [0]" << endl
-         << "    -r, --reseed-x FLOAT    look for internal seeds inside a seed longer than FLOAT*--min-seed [1.5]" << endl
-         << "    -u, --try-up-to INT     attempt to align up to the INT best candidate chains of seeds (1/2 for paired) [128]" << endl
-         << "    -l, --try-at-least INT  attempt to align at least the INT best candidate chains of seeds [1]" << endl
-         << "    -E, --approx-mq-cap INT weight MQ by suffix tree based estimate when estimate less than FLOAT [0]" << endl
-         << "    --id-mq-weight N        scale mapping quality by the alignment score identity to this power [2]" << endl
-         << "    -W, --min-chain INT     discard a chain if seeded bases shorter than INT [0]" << endl
-         << "    -C, --drop-chain FLOAT  drop chains shorter than FLOAT fraction of the longest overlapping chain [0.45]" << endl
-         << "    -n, --mq-overlap FLOAT  scale MQ by count of alignments with this overlap in the query with the primary [0]" << endl
-         << "    -P, --min-ident FLOAT   accept alignment only if the alignment identity is >= FLOAT [0]" << endl
-         << "    -H, --max-target-x N    skip cluster subgraphs with length > N*read_length [100]" << endl
-         << "    -m, --acyclic-graph     improves runtime when the graph is acyclic" << endl
-         << "    -w, --band-width INT    band width for long read alignment [256]" << endl
-         << "    -O, --band-overlap INT  band overlap for long read alignment [{-w}/8]" << endl
-         << "    -J, --band-jump INT     the maximum number of bands of insertion we consider in the alignment chain model [128]" << endl
-         << "    -B, --band-multi INT    consider this many alignments of each band in banded alignment [16]" << endl
-         << "    -Z, --band-min-mq INT   treat bands with less than this MQ as unaligned [0]" << endl
-         << "    -I, --fragment STR      fragment length distribution specification STR=m:μ:σ:o:d [5000:0:0:0:1]" << endl
-         << "                            max, mean, stdev, orientation (1=same, 0=flip), direction (1=forward, 0=backward)" << endl
-         << "    -U, --fixed-frag-model  don't learn the pair fragment model online, use {-I} without update" << endl
-         << "    -p, --print-frag-model  suppress alignment output and print the fragment model on stdout as per {-I} format" << endl
-         << "    --frag-calc INT         update the fragment model every INT perfect pairs [10]" << endl
-         << "    --fragment-x FLOAT      calculate max fragment size as frag_mean+frag_sd*FLOAT [10]" << endl
-         << "    --mate-rescues INT      attempt up to INT mate rescues per pair [64]" << endl
-         << "    -S, --unpaired-cost INT penalty for an unpaired read pair [17]" << endl
-         << "    --no-patch-aln          do not patch banded alignments by locally aligning unaligned regions" << endl
+         << "    -t, --threads N               number of compute threads to use" << endl
+         << "    -k, --min-mem INT             minimum MEM length (if 0 estimate via -e) [0]" << endl
+         << "    -e, --mem-chance FLOAT        set {-k} such that this fraction of {-k} length hits will by chance [5e-4]" << endl
+         << "    -c, --hit-max N               ignore MEMs who have >N hits in our index (0 for no limit) [2048]" << endl
+         << "    -Y, --max-mem INT             ignore mems longer than this length (unset if 0) [0]" << endl
+         << "    -r, --reseed-x FLOAT          look for internal seeds inside a seed longer than FLOAT*--min-seed [1.5]" << endl
+         << "    -u, --try-up-to INT           attempt to align up to the INT best candidate chains of seeds (1/2 for paired) [128]" << endl
+         << "    -l, --try-at-least INT        attempt to align at least the INT best candidate chains of seeds [1]" << endl
+         << "    -E, --approx-mq-cap INT       weight MQ by suffix tree based estimate when estimate less than FLOAT [0]" << endl
+         << "    --id-mq-weight N              scale mapping quality by the alignment score identity to this power [2]" << endl
+         << "    -W, --min-chain INT           discard a chain if seeded bases shorter than INT [0]" << endl
+         << "    -C, --drop-chain FLOAT        drop chains shorter than FLOAT fraction of the longest overlapping chain [0.45]" << endl
+         << "    -n, --mq-overlap FLOAT        scale MQ by count of alignments with this overlap in the query with the primary [0]" << endl
+         << "    -P, --min-ident FLOAT         accept alignment only if the alignment identity is >= FLOAT [0]" << endl
+         << "    -H, --max-target-x N          skip cluster subgraphs with length > N*read_length [100]" << endl
+         << "    -m, --acyclic-graph           improves runtime when the graph is acyclic" << endl
+         << "    -w, --band-width INT          band width for long read alignment [256]" << endl
+         << "    -O, --band-overlap INT        band overlap for long read alignment [{-w}/8]" << endl
+         << "    -J, --band-jump INT           the maximum number of bands of insertion we consider in the alignment chain model [128]" << endl
+         << "    -B, --band-multi INT          consider this many alignments of each band in banded alignment [16]" << endl
+         << "    -Z, --band-min-mq INT         treat bands with less than this MQ as unaligned [0]" << endl
+         << "    -I, --fragment STR            fragment length distribution specification STR=m:μ:σ:o:d [5000:0:0:0:1]" << endl
+         << "                                  max, mean, stdev, orientation (1=same, 0=flip), direction (1=forward, 0=backward)" << endl
+         << "    -U, --fixed-frag-model        don't learn the pair fragment model online, use {-I} without update" << endl
+         << "    -p, --print-frag-model        suppress alignment output and print the fragment model on stdout as per {-I} format" << endl
+         << "    --frag-calc INT               update the fragment model every INT perfect pairs [10]" << endl
+         << "    --fragment-x FLOAT            calculate max fragment size as frag_mean+frag_sd*FLOAT [10]" << endl
+         << "    --mate-rescues INT            attempt up to INT mate rescues per pair [64]" << endl
+         << "    -S, --unpaired-cost INT       penalty for an unpaired read pair [17]" << endl
+         << "    --no-patch-aln                do not patch banded alignments by locally aligning unaligned regions" << endl
+         << "    --xdrop-alignment             use X-drop heuristic (much faster for long-read alignment)" << endl
+         << "    --max-gap-length              maximum gap length allowed in each contiguous alignment (for X-drop alignment) [40]" << endl
          << "scoring:" << endl
-         << "    -q, --match INT         use this match score [1]" << endl
-         << "    -z, --mismatch INT      use this mismatch penalty [4]" << endl
-         << "    --score-matrix FILE     read a 5x5 integer substitution scoring matrix from a file" << endl
-         << "    -o, --gap-open INT      use this gap open penalty [6]" << endl
-         << "    -y, --gap-extend INT    use this gap extension penalty [1]" << endl
-         << "    -L, --full-l-bonus INT  the full-length alignment bonus [5]" << endl
-         << "    --drop-full-l-bonus     remove the full length bonus from the score before sorting and MQ calculation" << endl
-         << "    -a, --hap-exp FLOAT     the exponent for haplotype consistency likelihood in alignment score [1]" << endl
-         << "    -A, --qual-adjust       perform base quality adjusted alignments (requires base quality input)" << endl
+         << "    -q, --match INT               use this match score [1]" << endl
+         << "    -z, --mismatch INT            use this mismatch penalty [4]" << endl
+         << "    --score-matrix FILE           read a 5x5 integer substitution scoring matrix from a file" << endl
+         << "    -o, --gap-open INT            use this gap open penalty [6]" << endl
+         << "    -y, --gap-extend INT          use this gap extension penalty [1]" << endl
+         << "    -L, --full-l-bonus INT        the full-length alignment bonus [5]" << endl
+         << "    --drop-full-l-bonus           remove the full length bonus from the score before sorting and MQ calculation" << endl
+         << "    -a, --hap-exp FLOAT           the exponent for haplotype consistency likelihood in alignment score [1]" << endl
+         << "    --recombination-penalty FLOAT use this log recombination penalty for GBWT haplotype scoring [20.7]" << endl
+         << "    -A, --qual-adjust             perform base quality adjusted alignments (requires base quality input)" << endl
          << "input:" << endl
-         << "    -s, --sequence STR      align a string to the graph in graph.vg using partial order alignment" << endl
-         << "    -V, --seq-name STR      name the sequence using this value (for graph modification with new named paths)" << endl
-         << "    -T, --reads FILE        take reads (one per line) from FILE, write alignments to stdout" << endl
-         << "    -b, --hts-input FILE    align reads from htslib-compatible FILE (BAM/CRAM/SAM) stdin (-), alignments to stdout" << endl
-         << "    -G, --gam-input FILE    realign GAM input" << endl
-         << "    -f, --fastq FILE        input fastq or (2-line format) fasta, possibly compressed, two are allowed, one for each mate" << endl
-         << "    -F, --fasta FILE        align the sequences in a FASTA file that may have multiple lines per reference sequence" << endl
-         << "    -i, --interleaved       fastq or GAM is interleaved paired-ended" << endl
-         << "    -N, --sample NAME       for --reads input, add this sample" << endl
-         << "    -R, --read-group NAME   for --reads input, add this read group" << endl
+         << "    -s, --sequence STR            align a string to the graph in graph.vg using partial order alignment" << endl
+         << "    -V, --seq-name STR            name the sequence using this value (for graph modification with new named paths)" << endl
+         << "    -T, --reads FILE              take reads (one per line) from FILE, write alignments to stdout" << endl
+         << "    -b, --hts-input FILE          align reads from htslib-compatible FILE (BAM/CRAM/SAM) stdin (-), alignments to stdout" << endl
+         << "    -G, --gam-input FILE          realign GAM input" << endl
+         << "    -f, --fastq FILE              input fastq or (2-line format) fasta, possibly compressed, two are allowed, one for each mate" << endl
+         << "    -F, --fasta FILE              align the sequences in a FASTA file that may have multiple lines per reference sequence" << endl
+         << "    -i, --interleaved             fastq or GAM is interleaved paired-ended" << endl
+         << "    -N, --sample NAME             for --reads input, add this sample" << endl
+         << "    -R, --read-group NAME         for --reads input, add this read group" << endl
          << "output:" << endl
-         << "    -j, --output-json       output JSON rather than an alignment stream (helpful for debugging)" << endl
-         << "    --surject-to TYPE       surject the output into the graph's paths, writing TYPE := bam |sam | cram" << endl
-         << "    --buffer-size INT       buffer this many alignments together before outputting in GAM [512]" << endl
-         << "    -X, --compare           realign GAM input (-G), writing alignment with \"correct\" field set to overlap with input" << endl
-         << "    -v, --refpos-table      for efficient testing output a table of name, chr, pos, mq, score" << endl
-         << "    -K, --keep-secondary    produce alignments for secondary input alignments in addition to primary ones" << endl
-         << "    -M, --max-multimaps INT produce up to INT alignments for each read [1]" << endl
-         << "    -Q, --mq-max INT        cap the mapping quality at INT [60]" << endl
-         << "    -D, --debug             print debugging information about alignment to stderr" << endl;
+         << "    -j, --output-json             output JSON rather than an alignment stream (helpful for debugging)" << endl
+         << "    --surject-to TYPE             surject the output into the graph's paths, writing TYPE := bam |sam | cram" << endl
+         << "    --buffer-size INT             buffer this many alignments together before outputting in GAM [512]" << endl
+         << "    -X, --compare                 realign GAM input (-G), writing alignment with \"correct\" field set to overlap with input" << endl
+         << "    -v, --refpos-table            for efficient testing output a table of name, chr, pos, mq, score" << endl
+         << "    -K, --keep-secondary          produce alignments for secondary input alignments in addition to primary ones" << endl
+         << "    -M, --max-multimaps INT       produce up to INT alignments for each read [1]" << endl
+         << "    -Q, --mq-max INT              cap the mapping quality at INT [60]" << endl
+         << "    -D, --debug                   print debugging information about alignment to stderr" << endl;
 
 }
 
@@ -93,6 +96,7 @@ int main_map(int argc, char** argv) {
     }
 
     #define OPT_SCORE_MATRIX 1000
+    #define OPT_RECOMBINATION_PENALTY 1001
     string matrix_file_name;
     string seq;
     string qual;
@@ -135,6 +139,7 @@ int main_map(int argc, char** argv) {
     int8_t full_length_bonus = default_full_length_bonus;
     int unpaired_penalty = 17;
     double haplotype_consistency_exponent = 1;
+    double recombination_penalty = 20.7;
     bool strip_bonuses = false;
     bool qual_adjust_alignments = false;
     int extra_multimaps = 128;
@@ -167,6 +172,8 @@ int main_map(int argc, char** argv) {
     bool patch_alignments = true;
     int min_banded_mq = 0;
     int max_sub_mem_recursion_depth = 2;
+    bool xdrop_alignment = false;
+    uint32_t max_gap_length = 40;
 
     int c;
     optind = 2; // force optind past command positional argument
@@ -221,6 +228,7 @@ int main_map(int argc, char** argv) {
                 {"fragment-x", required_argument, 0, '3'},
                 {"full-l-bonus", required_argument, 0, 'L'},
                 {"hap-exp", required_argument, 0, 'a'},
+                {"recombination-penalty", required_argument, 0, OPT_RECOMBINATION_PENALTY},
                 {"acyclic-graph", no_argument, 0, 'm'},
                 {"mem-chance", required_argument, 0, 'e'},
                 {"drop-chain", required_argument, 0, 'C'},
@@ -238,6 +246,8 @@ int main_map(int argc, char** argv) {
                 {"no-patch-aln", no_argument, 0, '8'},
                 {"drop-full-l-bonus", no_argument, 0, '2'},
                 {"unpaired-cost", required_argument, 0, 'S'},
+                {"max-gap-length", required_argument, 0, 1},
+                {"xdrop-alignment", no_argument, 0, 2},
                 {0, 0, 0, 0}
             };
 
@@ -277,27 +287,27 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'c':
-            hit_max = atoi(optarg);
+            hit_max = parse<int>(optarg);
             break;
 
         case 'M':
-            max_multimaps = atoi(optarg);
+            max_multimaps = parse<int>(optarg);
             break;
 
         case '7':
-            identity_weight = atof(optarg);
+            identity_weight = parse<double>(optarg);
             break;
 
         case 'Q':
-            max_mapping_quality = atoi(optarg);
+            max_mapping_quality = parse<int>(optarg);
             break;
 
         case 'E':
-            maybe_mq_threshold = atof(optarg);
+            maybe_mq_threshold = parse<double>(optarg);
             break;
 
         case 'L':
-            full_length_bonus = atoi(optarg);
+            full_length_bonus = parse<int>(optarg);
             break;
 
         case '2':
@@ -305,7 +315,11 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'a':
-            haplotype_consistency_exponent = atof(optarg);
+            haplotype_consistency_exponent = parse<double>(optarg);
+            break;
+            
+        case OPT_RECOMBINATION_PENALTY:
+            recombination_penalty = parse<double>(optarg);
             break;
         
         case 'm':
@@ -347,7 +361,7 @@ int main_map(int argc, char** argv) {
             break;
 
         case 't':
-            omp_set_num_threads(atoi(optarg));
+            omp_set_num_threads(parse<int>(optarg));
             break;
 
         case 'D':
@@ -355,19 +369,19 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'e':
-            chance_match = atof(optarg);
+            chance_match = parse<double>(optarg);
             break;
 
         case 'C':
-            drop_chain = atof(optarg);
+            drop_chain = parse<double>(optarg);
             break;
 
         case 'l':
-            min_multimaps = atoi(optarg);
+            min_multimaps = parse<int>(optarg);
             break;
 
         case 'n':
-            mq_overlap = atof(optarg);
+            mq_overlap = parse<double>(optarg);
             break;
 
         case 'G':
@@ -379,59 +393,60 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'w':
-            band_width = atoi(optarg);
+            band_width = parse<int>(optarg);
+            band_width = band_width == 0 ? INT_MAX : band_width;
             break;
 
         case 'O':
-            band_overlap = atoi(optarg);
+            band_overlap = parse<int>(optarg);
             break;
 
         case 'B':
-            band_multimaps = atoi(optarg);
+            band_multimaps = parse<int>(optarg);
             break;
 
         case 'J':
-            max_band_jump = atoi(optarg);
+            max_band_jump = parse<int>(optarg);
             break;
 
         case 'Z':
-            min_banded_mq = atoi(optarg);
+            min_banded_mq = parse<int>(optarg);
             break;
 
         case 'P':
-            min_score = atof(optarg);
+            min_score = parse<double>(optarg);
             break;
 
         case 'k':
-            min_mem_length = atoi(optarg);
+            min_mem_length = parse<int>(optarg);
             break;
 
         case 'Y':
-            max_mem_length = atoi(optarg);
+            max_mem_length = parse<int>(optarg);
             break;
 
         case 'r':
-            mem_reseed_factor = atof(optarg);
+            mem_reseed_factor = parse<double>(optarg);
             break;
 
         case 'W':
-            min_cluster_length = atoi(optarg);
+            min_cluster_length = parse<int>(optarg);
             break;
 
         case 'H':
-            max_target_factor = atoi(optarg);
+            max_target_factor = parse<int>(optarg);
             break;
 
         case '9':
-            buffer_size = atoi(optarg);
+            buffer_size = parse<int>(optarg);
             break;
 
         case 'q':
-            match = atoi(optarg);
+            match = parse<int>(optarg);
             break;
 
         case 'z':
-            mismatch = atoi(optarg);
+            mismatch = parse<int>(optarg);
             break;
 
         case OPT_SCORE_MATRIX:
@@ -443,11 +458,11 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'o':
-            gap_open = atoi(optarg);
+            gap_open = parse<int>(optarg);
             break;
 
         case 'y':
-            gap_extend = atoi(optarg);
+            gap_extend = parse<int>(optarg);
             break;
 
         case 'A':
@@ -455,7 +470,7 @@ int main_map(int argc, char** argv) {
             break;
 
         case 'u':
-            extra_multimaps = atoi(optarg);
+            extra_multimaps = parse<int>(optarg);
             break;
 
         case 'X':
@@ -494,15 +509,15 @@ int main_map(int argc, char** argv) {
         break;
 
         case '3':
-            fragment_sigma = atof(optarg);
+            fragment_sigma = parse<double>(optarg);
             break;
 
         case 'S':
-            unpaired_penalty = atoi(optarg);
+            unpaired_penalty = parse<int>(optarg);
             break;
 
         case '0':
-            mate_rescues = atoi(optarg);
+            mate_rescues = parse<int>(optarg);
             break;
 
         case 'U':
@@ -514,7 +529,13 @@ int main_map(int argc, char** argv) {
             break;
 
         case '4':
-            fragment_model_update = atoi(optarg);
+            fragment_model_update = parse<int>(optarg);
+            break;
+
+        case 1:
+            max_gap_length = atoi(optarg);     // fall through
+        case 2:
+            xdrop_alignment = true;
             break;
 
         case 'h':
@@ -736,7 +757,7 @@ int main_map(int argc, char** argv) {
             int64_t path_pos = -1;
             bool path_reverse = false;
             
-            auto surj = surjectors[omp_get_thread_num()]->path_anchored_surject(aln, path_names, path_name, path_pos, path_reverse);
+            auto surj = surjectors[omp_get_thread_num()]->surject(aln, path_names, path_name, path_pos, path_reverse);
             surjects1.push_back(make_tuple(path_name, path_pos, path_reverse, surj));
             
             // hack: if we haven't established the header, we look at the reads to guess which read groups to put in it
@@ -752,7 +773,7 @@ int main_map(int argc, char** argv) {
             int64_t path_pos = -1;
             bool path_reverse = false;
             
-            auto surj = surjectors[omp_get_thread_num()]->path_anchored_surject(aln, path_names, path_name, path_pos, path_reverse);
+            auto surj = surjectors[omp_get_thread_num()]->surject(aln, path_names, path_name, path_pos, path_reverse);
             surjects2.push_back(make_tuple(path_name, path_pos, path_reverse, surj));
             
             // Don't try and populate the header; it should have happened already
@@ -950,12 +971,13 @@ int main_map(int argc, char** argv) {
         m->fast_reseed = use_fast_reseed;
         m->max_sub_mem_recursion_depth = max_sub_mem_recursion_depth;
         m->max_target_factor = max_target_factor;
-        m->set_alignment_scores(match, mismatch, gap_open, gap_extend, full_length_bonus, haplotype_consistency_exponent);
+        m->set_alignment_scores(match, mismatch, gap_open, gap_extend, full_length_bonus, haplotype_consistency_exponent, max_gap_length);
         if(matrix_stream.is_open()) m->load_scoring_matrix(matrix_stream);
         m->strip_bonuses = strip_bonuses;
         m->adjust_alignments_for_base_quality = qual_adjust_alignments;
         m->extra_multimaps = extra_multimaps;
         m->mapping_quality_method = mapping_quality_method;
+        m->recombination_penalty = recombination_penalty;
         m->always_rescue = always_rescue;
         m->frag_stats.fixed_fragment_model = fixed_fragment_model;
         m->frag_stats.fragment_max = fragment_max;
@@ -988,7 +1010,7 @@ int main_map(int argc, char** argv) {
             unaligned.set_quality(qual);
         }
 
-        vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+        vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
         if(alignments.size() == 0) {
             // If we didn't have any alignments, report the unaligned alignment
             alignments.push_back(unaligned);
@@ -1023,7 +1045,7 @@ int main_map(int argc, char** argv) {
                     Alignment unaligned;
                     unaligned.set_sequence(line);
 
-                    vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+                    vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
 
                     for(auto& alignment : alignments) {
                         // Set the alignment metadata
@@ -1049,7 +1071,7 @@ int main_map(int argc, char** argv) {
                 unaligned.set_sequence(seq);
                 unaligned.set_name(name);
                 int tid = omp_get_thread_num();
-                vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+                vector<Alignment> alignments = mapper[tid]->align_multi(unaligned, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
                 for(auto& alignment : alignments) {
                     // Set the alignment metadata
                     if (!sample_name.empty()) alignment.set_sample_name(sample_name);
@@ -1077,7 +1099,8 @@ int main_map(int argc, char** argv) {
              &max_mem_length,
              &band_width,
              &band_overlap,
-             &empty_alns]
+             &empty_alns,
+             &xdrop_alignment]
                 (Alignment& alignment) {
 
                     if(alignment.is_secondary() && !keep_secondary) {
@@ -1086,7 +1109,7 @@ int main_map(int argc, char** argv) {
                     }
 
                     int tid = omp_get_thread_num();
-                    vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+                    vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
 
                     // Output the alignments in JSON or protobuf as appropriate.
                     output_alignments(alignments, empty_alns);
@@ -1121,10 +1144,11 @@ int main_map(int argc, char** argv) {
                  &pair_window,
                  &top_pairs_only,
                  &print_fragment_model,
-                 &output_func](Alignment& aln1, Alignment& aln2) {
+                 &output_func,
+                 &xdrop_alignment](Alignment& aln1, Alignment& aln2) {
                 auto our_mapper = mapper[omp_get_thread_num()];
                 bool queued_resolve_later = false;
-                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false);
+                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false, xdrop_alignment);
                 if (!queued_resolve_later) {
                     output_func(aln1, aln2, alnp);
                     // check if we should try to align the queued alignments
@@ -1136,7 +1160,8 @@ int main_map(int argc, char** argv) {
                                                                        queued_resolve_later,
                                                                        max_mem_length,
                                                                        top_pairs_only,
-                                                                       true);
+                                                                       true,
+                                                                       xdrop_alignment);
                             output_func(p.first, p.second, alnp);
                         }
                         our_mapper->imperfect_pairs_to_retry.clear();
@@ -1155,7 +1180,8 @@ int main_map(int argc, char** argv) {
                                                                queued_resolve_later,
                                                                max_mem_length,
                                                                top_pairs_only,
-                                                               true);
+                                                               true,
+                                                               xdrop_alignment);
                     output_func(p.first, p.second, alnp);
                 }
                 our_mapper->imperfect_pairs_to_retry.clear();
@@ -1170,11 +1196,12 @@ int main_map(int argc, char** argv) {
                  &max_mem_length,
                  &band_width,
                  &band_overlap,
-                 &empty_alns]
+                 &empty_alns,
+                 &xdrop_alignment]
                     (Alignment& alignment) {
 
                         int tid = omp_get_thread_num();
-                        vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+                        vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
                         //cerr << "This is just before output_alignments" << alignment.DebugString() << endl;
                         output_alignments(alignments, empty_alns);
                     };
@@ -1204,10 +1231,11 @@ int main_map(int argc, char** argv) {
                  &pair_window,
                  &top_pairs_only,
                  &print_fragment_model,
-                 &output_func](Alignment& aln1, Alignment& aln2) {
+                 &output_func,
+                 &xdrop_alignment](Alignment& aln1, Alignment& aln2) {
                 auto our_mapper = mapper[omp_get_thread_num()];
                 bool queued_resolve_later = false;
-                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false);
+                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false, xdrop_alignment);
                 if (!queued_resolve_later) {
                     output_func(aln1, aln2, alnp);
                     // check if we should try to align the queued alignments
@@ -1219,7 +1247,8 @@ int main_map(int argc, char** argv) {
                                                                        queued_resolve_later,
                                                                        max_mem_length,
                                                                        top_pairs_only,
-                                                                       true);
+                                                                       true,
+                                                                       xdrop_alignment);
                             output_func(p.first, p.second, alnp);
                         }
                         our_mapper->imperfect_pairs_to_retry.clear();
@@ -1237,7 +1266,8 @@ int main_map(int argc, char** argv) {
                                                                queued_resolve_later,
                                                                max_mem_length,
                                                                top_pairs_only,
-                                                               true);
+                                                               true,
+                                                               xdrop_alignment);
                     output_func(p.first, p.second, alnp);
                 }
                 our_mapper->imperfect_pairs_to_retry.clear();
@@ -1280,10 +1310,11 @@ int main_map(int argc, char** argv) {
                  &pair_window,
                  &top_pairs_only,
                  &print_fragment_model,
-                 &output_func](Alignment& aln1, Alignment& aln2) {
+                 &output_func,
+                 &xdrop_alignment](Alignment& aln1, Alignment& aln2) {
                 auto our_mapper = mapper[omp_get_thread_num()];
                 bool queued_resolve_later = false;
-                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false);
+                auto alnp = our_mapper->align_paired_multi(aln1, aln2, queued_resolve_later, max_mem_length, top_pairs_only, false, xdrop_alignment);
                 if (!queued_resolve_later) {
                     output_func(aln1, aln2, alnp);
                     // check if we should try to align the queued alignments
@@ -1295,7 +1326,8 @@ int main_map(int argc, char** argv) {
                                                                        queued_resolve_later,
                                                                        max_mem_length,
                                                                        top_pairs_only,
-                                                                       true);
+                                                                       true,
+                                                                       xdrop_alignment);
                             output_func(p.first, p.second, alnp);
                         }
                         our_mapper->imperfect_pairs_to_retry.clear();
@@ -1313,7 +1345,8 @@ int main_map(int argc, char** argv) {
                                                                queued_resolve_later,
                                                                max_mem_length,
                                                                top_pairs_only,
-                                                               true);
+                                                               true,
+                                                               xdrop_alignment);
                     output_func(p.first, p.second, alnp);
                 }
                 our_mapper->imperfect_pairs_to_retry.clear();
@@ -1329,11 +1362,11 @@ int main_map(int argc, char** argv) {
                  &band_width,
                  &band_overlap,
                  &compare_gam,
-                 &empty_alns]
-                (Alignment& alignment) {
+                 &empty_alns,
+                 &xdrop_alignment](Alignment& alignment) {
                 int tid = omp_get_thread_num();
                 std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-                vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap);
+                vector<Alignment> alignments = mapper[tid]->align_multi(alignment, kmer_size, kmer_stride, max_mem_length, band_width, band_overlap, xdrop_alignment);
                 std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();
                 std::chrono::duration<double> elapsed_seconds = end-start;
                 // Output the alignments in JSON or protobuf as appropriate.

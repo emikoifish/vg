@@ -1,4 +1,5 @@
 #include "gssw_aligner.hpp"
+#include "xdrop_aligner.hpp"
 #include "json2pb.h"
 
 static const double quality_scale_factor = 10.0 / log(10.0);
@@ -363,8 +364,14 @@ double BaseAligner::maximum_mapping_quality_exact(vector<double>& scaled_scores,
         }
     }
     
-    // We should never try to return an injected 0 score as the winner.
-    assert(!(padded && *max_idx_out == 1));
+    if (padded && *max_idx_out == 1) {
+        // Force us not to try to return the injected 0 as the winner.
+        // TODO: doesn't this mean the score is negative?
+        cerr << "warning:[BaseAligner::maximum_mapping_quality_exact]: Max score of " << max_score
+            << " is the padding score; changing to " << scaled_scores[0] << endl;
+        max_score = scaled_scores[0];
+        *max_idx_out = 0;
+    }
     
     double direct_mapq = -quality_scale_factor * subtract_log(0.0, max_score - log_sum_exp);
     return std::isinf(direct_mapq) ? (double) numeric_limits<int32_t>::max() : direct_mapq;
@@ -442,10 +449,14 @@ double BaseAligner::maximum_mapping_quality_approx(vector<double>& scaled_scores
         }
     }
    
-    // Since we loop through from start to end, all the numbers should be
-    // nonnegative, and we break ties in favor of the old max, we should never
-    // try to return an injected 0 score as the winner.
-    assert(!(padded && max_idx == 1));
+    if (padded && max_idx == 1) {
+        // Force us not to try to return the injected 0 as the winner.
+        // TODO: doesn't this mean the score is negative?
+        cerr << "warning:[BaseAligner::maximum_mapping_quality_approx]: Max score of " << max_score
+            << " is the padding score; changing to " << scaled_scores[0] << endl;
+        max_score = scaled_scores[0];
+        max_idx = 0;
+    }
    
     *max_idx_out = max_idx;
 
@@ -829,6 +840,18 @@ Aligner::Aligner(int8_t _match,
                  int8_t _gap_extension,
                  int8_t _full_length_bonus,
                  double gc_content)
+    : Aligner(_match, _mismatch, _gap_open, _gap_extension, _full_length_bonus, gc_content, default_max_gap_length)
+{
+}
+
+Aligner::Aligner(int8_t _match,
+                 int8_t _mismatch,
+                 int8_t _gap_open,
+                 int8_t _gap_extension,
+                 int8_t _full_length_bonus,
+                 double gc_content,
+                 uint32_t _max_gap_length)
+    : xdrop(_match, _mismatch, _gap_open, _gap_extension, _full_length_bonus, _max_gap_length)
 {
     match = _match;
     mismatch = _mismatch;
@@ -839,13 +862,20 @@ Aligner::Aligner(int8_t _match,
     nt_table = gssw_create_nt_table();
     score_matrix = gssw_create_score_matrix(match, mismatch);
     BaseAligner::init_mapping_quality(gc_content);
+    // bench_init(bench);
 }
 
+/*
+Aligner::~Aligner()
+{
+    // fprintf(stderr, "gssw: time(%lu), count(%lu)\n", bench_get(bench) / 1000, bench_get_count(bench));
+}
+*/
 
 void Aligner::align_internal(Alignment& alignment, vector<Alignment>* multi_alignments, Graph& g,
                              bool pinned, bool pin_left, int32_t max_alt_alns,
                              bool traceback_aln, bool print_score_matrices) {
-
+    // bench_start(bench);
     // check input integrity
     if (pin_left && !pinned) {
         cerr << "error:[Aligner] cannot choose pinned end in non-pinned alignment" << endl;
@@ -857,6 +887,10 @@ void Aligner::align_internal(Alignment& alignment, vector<Alignment>* multi_alig
     }
     if (!multi_alignments && max_alt_alns != 1) {
         cerr << "error:[Aligner] cannot specify maximum number of alignments in single alignment" << endl;
+        exit(EXIT_FAILURE);
+    }
+    if (max_alt_alns <= 0) {
+        cerr << "error:[Aligner] cannot do less than 1 alignment" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -913,6 +947,7 @@ void Aligner::align_internal(Alignment& alignment, vector<Alignment>* multi_alig
         
             // convert optimal alignment and store it in the input Alignment object (in the multi alignment,
             // this will have been set to the first in the vector)
+            // We know the 0th alignment always exists because we enforce that max_alt_alns >= 1
             if (gms[0]->score > 0) {
                 // have a mapping, can just convert normally
                 gssw_mapping_to_alignment(graph, gms[0], alignment, pinned, pin_left, print_score_matrices);
@@ -1009,6 +1044,7 @@ void Aligner::align_internal(Alignment& alignment, vector<Alignment>* multi_alig
     //gssw_graph_print_score_matrices(graph, sequence.c_str(), sequence.size(), stderr);
     
     gssw_graph_destroy(graph);
+    // bench_end(bench);
 }
 
 void Aligner::align(Alignment& alignment, Graph& g, bool traceback_aln, bool print_score_matrices) {
@@ -1145,6 +1181,23 @@ void Aligner::align_global_banded_multi(Alignment& alignment, vector<Alignment>&
     }
 }
 
+// X-drop aligner
+void Aligner::align_xdrop(Alignment& alignment, Graph& g, const vector<MaximalExactMatch>& mems, bool reverse_complemented, bool multithreaded)
+{
+    // cerr << "X-drop aligner" << endl;
+    if (multithreaded) {
+        auto xdrop_copy = xdrop; // make thread safe
+        xdrop_copy.align(alignment, g, mems, reverse_complemented);
+    } else {
+        xdrop.align(alignment, g, mems, reverse_complemented);
+    }
+}
+
+void Aligner::align_xdrop_multi(Alignment& alignment, Graph& g, const vector<MaximalExactMatch>& mems, bool reverse_complemented, int32_t max_alt_alns)
+{
+}
+
+
 // Scoring an exact match is very simple in an ordinary Aligner
 
 int32_t Aligner::score_exact_match(const Alignment& aln, size_t read_offset, size_t length) const {
@@ -1265,6 +1318,10 @@ void QualAdjAligner::align_internal(Alignment& alignment, vector<Alignment>* mul
         cerr << "error:[Aligner] cannot specify maximum number of alignments in single alignment" << endl;
         exit(EXIT_FAILURE);
     }
+    if (max_alt_alns <= 0) {
+        cerr << "error:[Aligner] cannot do less than 1 alignment" << endl;
+        exit(EXIT_FAILURE);
+    }
     
     // alignment pinning algorithm is based on pinning in bottom right corner, if pinning in top
     // left we need to reverse all the sequences first and translate the alignment back later
@@ -1328,6 +1385,7 @@ void QualAdjAligner::align_internal(Alignment& alignment, vector<Alignment>* mul
         
             // convert optimal alignment and store it in the input Alignment object (in the multi alignment,
             // this will have been set to the first in the vector)
+            // We know that the 0th alignment will always exist because we enforce that max_alt_alns >= 1
             if (gms[0]->score > 0) {
                 // have a mapping, can just convert normally
                 gssw_mapping_to_alignment(graph, gms[0], alignment, pinned, pin_left, print_score_matrices);
@@ -1467,6 +1525,15 @@ void QualAdjAligner::align_global_banded_multi(Alignment& alignment, vector<Alig
                                                                            true);
     
     band_graph.align(score_matrix, nt_table, gap_open, gap_extension);
+}
+
+// X-drop aligner
+void QualAdjAligner::align_xdrop(Alignment& alignment, Graph& g, const vector<MaximalExactMatch>& mems, bool reverse_complemented, bool multithreaded)
+{
+}
+
+void QualAdjAligner::align_xdrop_multi(Alignment& alignment, Graph& g, const vector<MaximalExactMatch>& mems, bool reverse_complemented, int32_t max_alt_alns)
+{
 }
 
 int32_t QualAdjAligner::score_exact_match(const Alignment& aln, size_t read_offset, size_t length) const {

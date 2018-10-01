@@ -13,6 +13,7 @@
 #include "../vg.hpp"
 #include "vg.pb.h"
 #include "../traversal_finder.hpp"
+#include "../stream.hpp"
 
 
 using namespace std;
@@ -89,7 +90,7 @@ int main_snarl(int argc, char** argv) {
             break;
 
         case 'm':
-            max_nodes = atoi(optarg);
+            max_nodes = parse<int>(optarg);
             break;
             
         case 't':
@@ -224,7 +225,7 @@ int main_snarl(int argc, char** argv) {
             if (!traversal_file.empty() && snarl->type() == ULTRABUBBLE &&
                 (!leaf_only || snarl_manager.is_leaf(snarl)) &&
                 (!top_level_only || snarl_manager.is_root(snarl)) &&
-                (snarl_manager.deep_contents(snarl, *graph, true).first.size() < max_nodes)) {
+                (snarl_manager.deep_contents(snarl, *graph, true).first.size() <= max_nodes)) {
                 
 #ifdef debug
                 cerr << "Look for traversals of " << pb2json(*snarl) << endl;

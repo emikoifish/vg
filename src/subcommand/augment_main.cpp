@@ -46,7 +46,7 @@ void help_augment(char** argv, ConfigurableParser& parser) {
          << "Embed GAM alignments into a graph to facilitate variant calling" << endl
          << endl
          << "general options:" << endl
-         << "    -a, --augmentation-mode M   augmentation mode.  M = {pileup, direct} [pileup]" << endl
+         << "    -a, --augmentation-mode M   augmentation mode.  M = {pileup, direct} [direct]" << endl
          << "    -Z, --translation FILE      save translations from augmented back to base graph to FILE" << endl
          << "    -A, --alignment-out FILE    save augmented GAM reads to FILE" << endl
          << "    -h, --help                  print this help message" << endl
@@ -71,7 +71,7 @@ void help_augment(char** argv, ConfigurableParser& parser) {
 int main_augment(int argc, char** argv) {
 
     // augmentation mode
-    string augmentation_mode = "pileup";
+    string augmentation_mode = "direct";
     
     // load pileupes from here
     string pileup_file_name;
@@ -172,7 +172,7 @@ int main_augment(int argc, char** argv) {
             verbose = true;
             break;            
         case 't':
-            thread_count = atoi(optarg);
+            thread_count = parse<int>(optarg);
             break;
 
             // Pileup Options
@@ -183,19 +183,19 @@ int main_augment(int argc, char** argv) {
             support_file_name = optarg;
             break;            
         case 'q':
-            min_quality = atoi(optarg);
+            min_quality = parse<int>(optarg);
             break;
         case 'm':
-            max_mismatches = atoi(optarg);
+            max_mismatches = parse<int>(optarg);
             break;
         case 'w':
-            window_size = atoi(optarg);
+            window_size = parse<int>(optarg);
             break;
         case 'M':
             use_mapq = false;
             break;            
         case 'g':
-            min_aug_support = atoi(optarg);
+            min_aug_support = parse<int>(optarg);
             break;            
         case 'U':
             expect_subgraph = true;
@@ -242,6 +242,18 @@ int main_augment(int argc, char** argv) {
         cerr << "[vg augment] error: pileup and direct are currently the only supported augmentation modes (-a)" << endl;
         return 1;
     }
+
+    if (augmentation_mode != "direct" and !gam_out_file_name.empty()) {
+        cerr << "[vg augment] error: GAM output only works with \"direct\" augmentation mode" << endl;
+        return 1;
+    }
+
+    if (augmentation_mode != "pileup" and (!support_file_name.empty() || !pileup_file_name.empty())) {
+        cerr << "[vg augment] error: Pileup (-P) and Support (-S) output only work with  \"pileup\" augmentation mode" << endl;
+        return 1;
+    }
+    
+    
 
     // read the graph
     if (show_progress) {

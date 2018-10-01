@@ -7,7 +7,7 @@ PATH=../bin:$PATH # for vg
 
 export LC_ALL="C" # force a consistent sort order
 
-plan tests 43
+plan tests 41
 
 is $(vg construct -r small/x.fa -v small/x.vcf.gz | vg mod -k x - | vg view - | grep "^P" | cut -f 3 | grep -o "[0-9]\+" |  wc -l) \
     $(vg construct -r small/x.fa -v small/x.vcf.gz | vg mod -k x - | vg view - | grep "^S" | wc -l) \
@@ -42,6 +42,8 @@ rm -rf t.vg t.gam
 
 is $(vg mod -n msgas/q_redundant.vg | vg view - | grep ^S | wc -l) 4 "normalization produces the correct number of nodes"
 
+is $(vg view -vF graphs/redundant-snp.gfa | vg mod -n - | vg view - | grep ^S | wc -l) 4 "normalization removes redundant SNP alleles"
+
 vg mod -n msgas/q_redundant.vg | vg validate -
 is $? 0 "normalization produces a valid graph"
 
@@ -65,11 +67,11 @@ set +o pipefail
 
 is $(vg msga -w 20 -f msgas/s.fa | vg mod -X 5 -| vg mod -u - | vg validate - && vg msga -w 20 -f msgas/s.fa | vg mod -X 5 - | vg mod -u - | vg paths -v - -X | vg view -a - | jq '.sequence' | sort | md5sum | cut -f 1 -d\ ) 2f785068c91dbe84177c1fd679b6f133 "unchop correctly handles paths"
 
-is $(vg view -Jv msgas/inv-mess.json | vg mod -u - | vg validate - && vg view -Jv msgas/inv-mess.json | vg mod -u - | md5sum | cut -f 1 -d\ ) 99caa2e7716596c7597535a6f0bc9c6e "unchop correctly handles a graph with an inversion"
+is "$(vg view -Jv msgas/inv-mess.json | vg mod -u - | vg validate - && vg view -Jv msgas/inv-mess.json | vg mod -u - | vg view - | sort | diff - msgas/inv-mess-unchopped.gfa)" "" "unchop correctly handles a graph with an inversion"
 
 is "$(vg view -Jv reversing/double_reversing.json | vg mod -u - | vg stats -z - | grep "nodes" | cut -f2)" "1" "unchop handles doubly-reversing edges"
 
-is $(vg view -Jv msgas/inv-mess.json | vg mod -n - | vg validate - && vg view -Jv msgas/inv-mess.json | vg mod -n - | md5sum | cut -f 1 -d\ ) 02e484f8bc83bf4f37ecda0ad684b235 "normalization works on a graph with an inversion"
+is "$(vg view -Jv msgas/inv-mess.json | vg mod -n - | vg validate - && vg view -Jv msgas/inv-mess.json | vg mod -n - | vg view - | sort | diff - msgas/inv-mess-normalized.gfa)" "" "normalization works on a graph with an inversion"
 
 vg msga -w 20 -f msgas/s.fa > s.vg
 vg msga -g s.vg -s TCAGATTCTCATCCCTCCTCAAGGGCTTCTGTAGCTTTGATGTGGAGTAGTTCCAGGCCATTTTAAGTTTCCTGTGGACTAAGGACAAAGGTGCGGGGAG -w 16 -N > s2.vg
@@ -114,16 +116,15 @@ rm -f c.vg
 
 vg construct -r small/x.fa -v small/x.vcf.gz >x.vg
 vg index -x x.xg -g x.gcsa -k 16 x.vg
-vg sim -s 1337 -n 100 -e 0.01 -i 0.005 -x x.xg -a >x.sim
-vg map -x x.xg -g x.gcsa -G x.sim -t 1 >x.gam
+vg map -x x.xg -g x.gcsa -G small/x-s1337-n100-e0.01-i0.005.gam -t 1 >x.gam
 vg mod -Z x.trans -i x.gam x.vg >x.mod.vg
 is $(vg view -Z x.trans | wc -l) 1288 "the expected graph translation is exported when the graph is edited"
-rm -rf x.vg x.xg x.gcsa x.reads x.gam x.mod.vg x.trans x.sim
+rm -rf x.vg x.xg x.gcsa x.reads x.gam x.mod.vg x.trans
 
 vg construct -r tiny/tiny.fa >flat.vg
 vg view flat.vg| sed 's/CAAATAAGGCTTGGAAATTTTCTGGAGTTCTATTATATTCCAACTCTCTG/CAAATAAGGCTTGGAAATTTTCTGGAGATCTATTATACTCCAACTCTCTG/' | vg view -Fv - >2snp.vg
 vg index -x 2snp.xg 2snp.vg
-vg sim -s 420 -l 30 -x 2snp.xg -n 30 -a >2snp.sim
+vg sim -l 30 -x 2snp.xg -n 30 -a >2snp.sim
 vg index -x flat.xg -g flat.gcsa -k 16 flat.vg
 vg map -g flat.gcsa -x flat.xg -G 2snp.sim -k 8 >2snp.gam
 is $(vg mod -i 2snp.gam flat.vg | vg mod -D - | vg mod -n - | vg view - | grep ^S | wc -l) 7 "editing the graph with many SNP-containing alignments does not introduce duplicate identical nodes"
@@ -134,11 +135,5 @@ vg construct -r small/x.fa -a -f -v small/x.vcf.gz >x.vg
 vg mod -v small/x.vcf.gz x.vg >x.sample.vg
 is $(vg stats x.sample.vg -l | cut -f 2) 1041 "subsetting a flat-alleles graph to a sample graph works"
 rm -f x.vg x.sample.vg 
-
-is "$(vg view -Fv overlaps/two_snvs_assembly1.gfa | vg mod --bluntify - | vg stats -l - | cut -f2)" "315" "bluntifying overlaps results in a graph with duplicated overlapping bases removed"
-
-is "$(vg view -Fv overlaps/two_snvs_assembly4.gfa | vg mod --bluntify - | vg stats -l - | cut -f2)" "335" "bluntifying overlaps works in a more complex graph"
-
-is "$(vg view -Fv overlaps/incorrect_overlap.gfa | vg mod --bluntify - | vg stats -l - | cut -f2)" "283" "bluntifying overlaps works even when we have overlap description errors"
 
 is $(vg mod -M 5 jumble/j.vg|  vg stats -s - | wc -l) 7 "removal of high-degree nodes results in the expected number of subgraphs"

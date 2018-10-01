@@ -24,6 +24,7 @@
 #include "utility.hpp"
 #include "alignment.hpp"
 #include "prune.hpp"
+#include "mem.hpp"
 
 #include "vg.pb.h"
 #include "hash_map.hpp"
@@ -40,7 +41,6 @@
 #include "colors.hpp"
 
 #include "types.hpp"
-#include "gfakluge.hpp"
 
 #include "nodetraversal.hpp"
 #include "nodeside.hpp"
@@ -78,7 +78,7 @@ namespace vg {
  * However, edges can connect to either the start or end of either node.
  *
  */
-class VG : public Progressive, public MutableHandleGraph {
+class VG : public Progressive, public MutableHandleGraph, public PathHandleGraph {
 
 public:
 
@@ -127,6 +127,52 @@ public:
     virtual size_t node_size() const;
     
     ////////////////////////////////////////////////////////////////////////////
+    // Path handle interface
+    ////////////////////////////////////////////////////////////////////////////
+    
+    /// Look up the path handle for the given path name
+    virtual path_handle_t get_path_handle(const string& path_name) const;
+    
+    /// Look up the name of a path from a handle to it
+    virtual string get_path_name(const path_handle_t& path_handle) const;
+    
+    /// Returns the number of node occurrences in the path
+    virtual size_t get_occurrence_count(const path_handle_t& path_handle) const;
+    
+    /// Returns the number of paths stored in the graph
+    virtual size_t get_path_count() const;
+    
+    /// Execute a function on each path in the graph
+    virtual void for_each_path_handle(const function<void(const path_handle_t&)>& iteratee) const;
+    
+    /// Get a node handle (node ID and orientation) from a handle to an occurrence on a path
+    virtual handle_t get_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Get a handle to the first occurrence in a path
+    virtual occurrence_handle_t get_first_occurrence(const path_handle_t& path_handle) const;
+    
+    /// Get a handle to the last occurrence in a path
+    virtual occurrence_handle_t get_last_occurrence(const path_handle_t& path_handle) const;
+    
+    /// Returns true if the occurrence is not the last occurence on the path, else false
+    virtual bool has_next_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Returns true if the occurrence is not the first occurence on the path, else false
+    virtual bool has_previous_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Returns a handle to the next occurrence on the path
+    virtual occurrence_handle_t get_next_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Returns a handle to the previous occurrence on the path
+    virtual occurrence_handle_t get_previous_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Returns a handle to the path that an occurrence is on
+    virtual path_handle_t get_path_handle_of_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    /// Returns the 0-based ordinal rank of a occurrence on a path
+    virtual size_t get_ordinal_rank_of_occurrence(const occurrence_handle_t& occurrence_handle) const;
+    
+    ////////////////////////////////////////////////////////////////////////////
     // Mutable handle-based interface
     ////////////////////////////////////////////////////////////////////////////
     
@@ -144,6 +190,9 @@ public:
     
     /// Remove the edge connecting the given handles in the given order and orientations.
     virtual void destroy_edge(const handle_t& left, const handle_t& right);
+    
+    /// Remove all nodes and edges. Does not update any stored paths.
+    virtual void clear();
     
     /// Swap the nodes corresponding to the given handles, in the ordering used
     /// by for_each_handle when looping over the graph. Other handles to the
@@ -307,10 +356,6 @@ public:
     set<set<id_t> > multinode_strongly_connected_components(void);
     /// Returns true if the graph does not contain cycles.
     bool is_acyclic(void);
-    /// Returns true if the graph does not contain a directed cycle (but it may contain a reversing cycle)
-    bool is_directed_acyclic(void);
-    /// Return true if there are no reversing edges in the graph
-    bool is_single_stranded(void);
     /// Remove all elements which are not in a strongly connected component.
     void keep_multinode_strongly_connected_components(void);
     /// Does the specified node have any self-loops?
@@ -343,9 +388,6 @@ public:
     /// the same as the input graph. If inverting edges are present, node strandedness is arbitrary.
     VG unfold(uint32_t max_length,
               unordered_map<id_t, pair<id_t, bool> >& node_translation);
-    /// Create reverse complement nodes and edges for the entire graph. Doubles the size. Converts all inverting
-    /// edges into non-inverting edges.
-    VG split_strands(unordered_map<id_t, pair<id_t, bool> >& node_translation);
     /// Create the reverse complemented graph with topology preserved. Record translation in provided map.
     VG reverse_complement_graph(unordered_map<id_t, pair<id_t, bool>>& node_translation);
     /// Record the translation of this graph into itself in the provided map.
@@ -367,8 +409,6 @@ public:
     /// Convert edges that are both from_start and to_end to "regular" ones from end to start.
     void flip_doubly_reversed_edges(void);
 
-    /// Build a graph from a GFA stream.
-    void from_gfa(istream& in, bool showp = false);
     /// Build a graph from a Turtle stream.
     void from_turtle(string filename, string baseuri, bool showp = false);
 
@@ -455,8 +495,16 @@ public:
     void prune_complex_paths(int length, int edge_max, Node* head_node, Node* tail_node);
     void prune_short_subgraphs(size_t min_size);
 
-    /// Write to a stream in chunked graphs.
+    /// Write to a stream in chunked graphs. Adds an EOF marker.
+    /// Use when this VG will be the only thing in the stream.
     void serialize_to_ostream(ostream& out, id_t chunk_size = 1000);
+    /// Write to a stream in chunked graphs. Does not add an EOF marker, so
+    /// serializing multiple graphs to a stream won't produce spurious EOF
+    /// markers. Caller must call stream::finish(out) on the stream when done
+    /// writing to it.
+    /// Use when combining multiple VG objects in a stream/
+    void serialize_to_ostream_as_part(ostream& out, id_t chunk_size = 1000);
+    /// Write the graph to a file, with an EOF marker.
     void serialize_to_file(const string& file_name, id_t chunk_size = 1000);
 
     // can we handle this with merge?
@@ -685,6 +733,7 @@ public:
     /// Get general siblings of a node.
     set<Node*> siblings_of(Node* node);
     /// Remove easily-resolvable redundancy in the graph.
+    /// TODO: Cannot yet handle reversing edges! They will prevent the identification of siblings.
     void simplify_siblings(void);
     /// Remove easily-resolvable redundancy in the graph for all provided to-sibling sets.
     void simplify_to_siblings(const set<set<NodeTraversal>>& to_sibs);
@@ -703,6 +752,7 @@ public:
     Node* create_node(const string& seq, id_t id);
     /// Find a particular node.
     Node* get_node(id_t id);
+    const Node* get_node(id_t id) const;
     /// Get the subgraph of a node and all the edges it is responsible for
     /// (where it has the minimal ID) and add it into the given VG.
     void nonoverlapping_node_context_without_paths(Node* node, VG& g);
@@ -723,15 +773,16 @@ public:
     /// Destroy the node with the given ID.
     void destroy_node(id_t id);
     /// Determine if the graph has a node with the given ID.
-    bool has_node(id_t id);
+    bool has_node(id_t id) const;
     /// Determine if the graph contains the given node.
-    bool has_node(Node* node);
+    bool has_node(const Node* node) const;
     /// Determine if the graph contains the given node.
-    bool has_node(const Node& node);
+    bool has_node(const Node& node) const;
     /// Find a node with the given name, or create a new one if none is found.
     Node* find_node_by_name_or_add_new(string name);
     /// Run the given function on every node.
     void for_each_node(function<void(Node*)> lambda);
+    void for_each_node(function<void(const Node*)> lambda) const;
     /// Run the given function on every node in parallel.
     void for_each_node_parallel(function<void(Node*)> lambda);
     /// Go through all the nodes in the same connected component as the given node. Ignores relative orientation.
@@ -777,7 +828,7 @@ public:
              const function<bool(void)>& break_fn);
 
     /// Is the graph empty?
-    bool empty(void);
+    bool empty(void) const;
 
     /// Generate a digest of the serialized graph.
     const string hash(void);
@@ -886,6 +937,7 @@ public:
     bool has_inverting_edge_to(Node* n);
     /// Run the given function for each edge.
     void for_each_edge(function<void(Edge*)> lambda);
+    void for_each_edge(function<void(const Edge*)> lambda) const;
     /// Run the given function for each edge, in parallel.
     void for_each_edge_parallel(function<void(Edge*)> lambda);
 
@@ -940,8 +992,6 @@ public:
     void to_dot(ostream& out, vector<Alignment> alignments = {}, bool show_paths = false, bool walk_paths = false,
                 bool annotate_paths = false, bool show_mappings = false, bool invert_edge_ports = false, int random_seed = 0,
                 bool color_variants = false);
-    /// Convert the graph to GFA format.
-    void to_gfa(ostream& out);
     /// Convert the graph to Turtle format.
     void to_turtle(ostream& out, const string& rdf_base_uri, bool precompress);
     /// Determine if the graph is valid or not, according to the specified criteria.
@@ -950,10 +1000,6 @@ public:
                   bool check_paths = true,
                   bool check_orphans = true);
 
-    /// Topologically order the nodes in the Protobuf graph. Only valid if the graph is a DAG with all
-    /// no reversing edges or doubly reversing edges. No guarantee of system independent behavior, but
-    /// significantly faster than VG::sort().
-    void lazy_sort(void);
     /// Swap the given nodes. TODO: what does that mean?
     void swap_nodes(Node* a, Node* b);
     
@@ -972,11 +1018,28 @@ public:
                     size_t band_padding_override = 0,
                     size_t max_span = 0,
                     size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse, see constructor for the X-drop threshold
+                    bool multithreaded_xdrop = false,
                     bool print_score_matrices = false);
     /// Align without base quality adjusted scores.
     /// Align to the graph.
     /// May modify the graph by re-ordering the nodes.
     /// May add nodes to the graph, but cleans them up afterward.
+    Alignment align(const Alignment& alignment,
+                    Aligner* aligner,
+                    const vector<MaximalExactMatch>& mems,
+                    bool traceback = true,
+                    bool acyclic_and_sorted = false,
+                    size_t max_query_graph_ratio = 0,
+                    bool pinned_alignment = false,
+                    bool pin_left = false,
+                    bool banded_global = false,
+                    size_t band_padding_override = 0,
+                    size_t max_span = 0,
+                    size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse
+                    bool multithreaded_xdrop = false,
+                    bool print_score_matrices = false);
     Alignment align(const Alignment& alignment,
                     Aligner* aligner,
                     bool traceback = true,
@@ -988,6 +1051,8 @@ public:
                     size_t band_padding_override = 0,
                     size_t max_span = 0,
                     size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse
+                    bool multithreaded_xdrop = false,
                     bool print_score_matrices = false);
     
     /// Align with default Aligner.
@@ -1004,6 +1069,8 @@ public:
                     size_t band_padding_override = 0,
                     size_t max_span = 0,
                     size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse
+                    bool multithreaded_xdrop = false,
                     bool print_score_matrices = false);
     /// Align with default Aligner.
     /// Align to the graph.
@@ -1019,12 +1086,29 @@ public:
                     size_t band_padding_override = 0,
                     size_t max_span = 0,
                     size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse
+                    bool multithreaded_xdrop = false,
                     bool print_score_matrices = false);
     
     /// Align with base quality adjusted scores.
     /// Align to the graph.
     /// May modify the graph by re-ordering the nodes.
     /// May add nodes to the graph, but cleans them up afterward.
+    Alignment align_qual_adjusted(const Alignment& alignment,
+                                  QualAdjAligner* qual_adj_aligner,
+                                  const vector<MaximalExactMatch>& mems,
+                                  bool traceback = true,
+                                  bool acyclic_and_sorted = false,
+                                  size_t max_query_graph_ratio = 0,
+                                  bool pinned_alignment = false,
+                                  bool pin_left = false,
+                                  bool banded_global = false,
+                                  size_t band_padding_override = 0,
+                                  size_t max_span = 0,
+                                  size_t unroll_length = 0,
+                                  int xdrop_alignment = 0,              // 1 for forward, >1 for reverse
+                                  bool multithreaded_xdrop = false,
+                                  bool print_score_matrices = false);
     Alignment align_qual_adjusted(const Alignment& alignment,
                                   QualAdjAligner* qual_adj_aligner,
                                   bool traceback = true,
@@ -1036,6 +1120,8 @@ public:
                                   size_t band_padding_override = 0,
                                   size_t max_span = 0,
                                   size_t unroll_length = 0,
+                                  int xdrop_alignment = 0,              // 1 for forward, >1 for reverse
+                                  bool multithreaded_xdrop = false,
                                   bool print_score_matrices = false);
     /// Align with base quality adjusted scores.
     /// Align to the graph.
@@ -1052,6 +1138,8 @@ public:
                                   size_t band_padding_override = 0,
                                   size_t max_span = 0,
                                   size_t unroll_length = 0,
+                                  int xdrop_alignment = 0,              // 1 for forward, >1 for reverse
+                                  bool multithreaded_xdrop = false,
                                   bool print_score_matrices = false);
     
     
@@ -1161,6 +1249,7 @@ private:
     Alignment align(const Alignment& alignment,
                     Aligner* aligner,
                     QualAdjAligner* qual_adj_aligner,
+                    const vector<MaximalExactMatch>& mems,
                     bool traceback = true,
                     bool acyclic_and_sorted = false,
                     size_t max_query_graph_ratio = 0,
@@ -1170,6 +1259,8 @@ private:
                     size_t band_padding_override = 0,
                     size_t max_span = 0,
                     size_t unroll_length = 0,
+                    int xdrop_alignment = 0,                // 1 for forward, >1 for reverse
+                    bool multithreaded_xdrop = false,
                     bool print_score_matrices = false);
 
 

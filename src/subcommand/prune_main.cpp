@@ -109,7 +109,7 @@ void help_prune(char** argv) {
     std::cerr << "pruning modes (-P, -r, and -u are mutually exclusive):" << std::endl;
     std::cerr << "    -P, --prune            simply prune the graph (default)" << std::endl;
     std::cerr << "    -r, --restore-paths    restore the edges on non-alt paths" << std::endl;
-    std::cerr << "    -u, --unfold-paths     unfold XG paths and GBWT threads (requires -g)" << std::endl;
+    std::cerr << "    -u, --unfold-paths     unfold non-alt paths and GBWT threads" << std::endl;
     std::cerr << "    -v, --verify-paths     verify that the paths exist after pruning" << std::endl;
     std::cerr << "                           (potentially very slow)" << std::endl;
     std::cerr << "unfolding options:" << std::endl;
@@ -171,15 +171,15 @@ int main_prune(int argc, char** argv) {
         switch (c)
         {
         case 'k':
-            kmer_length = stoi(optarg);
+            kmer_length = parse<int>(optarg);
             kmer_length_set = true;
             break;
         case 'e':
-            edge_max = stoi(optarg);
+            edge_max = parse<int>(optarg);
             edge_max_set = true;
             break;
         case 's':
-            subgraph_min = stoul(optarg);
+            subgraph_min = parse<size_t>(optarg);
             subgraph_min_set = true;
             break;
         case 'P':
@@ -210,7 +210,7 @@ int main_prune(int argc, char** argv) {
             show_progress = true;
             break;
         case 't':
-            threads = stoi(optarg);
+            threads = parse<int>(optarg);
             threads = std::min(threads, omp_get_max_threads());
             threads = std::max(threads, 1);
             omp_set_num_threads(threads);
@@ -264,9 +264,7 @@ int main_prune(int argc, char** argv) {
         }
     }
     if (mode == mode_unfold) {
-        if (gbwt_name.empty()) {
-            std::cerr << "[vg prune]: mode " << mode_name(mode) << " requires --gbwt-name" << std::endl;
-        }
+        // Nothing here
     }
 
     // Dry run.
@@ -351,9 +349,11 @@ int main_prune(int argc, char** argv) {
 
     // Unfold the XG paths and the GBWT threads.
     if (mode == mode_unfold) {
-        get_input_file(gbwt_name, [&](std::istream& in) {
-           gbwt_index.load(in);
-        });
+        if (!gbwt_name.empty()) {
+            get_input_file(gbwt_name, [&](std::istream& in) {
+               gbwt_index.load(in);
+            });
+        }
         PhaseUnfolder unfolder(xg_index, gbwt_index, max_node_id + 1);
         if (append_mapping) {
             unfolder.read_mapping(mapping_name);

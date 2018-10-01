@@ -29,10 +29,18 @@ KEEP_INTERMEDIATE_FILES=0
 # Should we show stdout and stderr from tests? If so, set to "-s".
 SHOW_OPT=""
 # What toil-vg should we install?
-TOIL_VG_PACKAGE="git+https://github.com/vgteam/toil-vg.git@4a147495b97075d7498fba2cf21efe091a8e41af"
+TOIL_VG_PACKAGE="git+https://github.com/adamnovak/toil-vg.git@f04a21197cef57dc42a09e4f4d142baabd7c92bd"
+# What toil should we install?
+# Could be something like "toil[aws,mesos]==3.13.0"
+# or "git+https://github.com/adamnovak/toil.git@2b696bec34fa1381afdcf187456571d2b41f3842#egg=toil[aws,mesos]"
+TOIL_PACKAGE="toil[aws,mesos]==3.13.0"
 # What tests should we run?
 # Should be something like "jenkins/vgci.py::VGCITest::test_sim_brca2_snp1kg"
 PYTEST_TEST_SPEC="jenkins/vgci.py"
+# What S3 URL does test output go to?
+OUTPUT_DESTINATION="s3://vg-data/vg_ci"
+# What bucket owner account ID should be granted full control of uploaded objects?
+OUTPUT_OWNER="b1cf5e10ba0aeeb00e5ec70b3532826f22a979ae96c886d3081d0bdc1f51f67e"
 
 usage() {
     # Print usage to stderr
@@ -154,7 +162,16 @@ pip install requests
 pip install timeout_decorator
 pip install pytest
 pip install pygithub
-pip install toil[aws,mesos]==3.13.0
+
+# Install Toil
+echo "Installing toil from ${TOIL_PACKAGE}"
+pip install --upgrade "${TOIL_PACKAGE}"
+if [ "$?" -ne 0 ]
+then
+    echo "pip install toil fail"
+    exit 1
+fi
+
 # Don't manually install boto since toil just installs its preferred version
 
 # Install toil-vg itself
@@ -163,6 +180,7 @@ pip install --upgrade "${TOIL_VG_PACKAGE}"
 if [ "$?" -ne 0 ]
 then
     echo "pip install toil-vg fail"
+    exit 1
 fi
 
 # Make sure we have submodules
@@ -196,7 +214,7 @@ then
         echo "vg local build fail"
         BUILD_FAIL=1
     fi
-    VG_VERSION=`vg version`
+    VG_VERSION=`vg version -s`
     printf "vg-docker-version None\n" >> vgci_cfg.tsv
     printf "container None\n" >> vgci_cfg.tsv
 else
@@ -221,7 +239,7 @@ else
         for img in $(toil-vg generate-config | grep docker: | grep -v vg | awk '{print $2}' | sed "s/^\([\"']\)\(.*\)\1\$/\2/g"); do docker pull $img ; done
         for img in $(toil-vg generate-config | grep docker: | grep -v vg | awk '{print $2}' | sed "s/^\([\"']\)\(.*\)\1\$/\2/g"); do docker pull $img ; done
     fi
-    VG_VERSION=`docker run jenkins-docker-vg-local vg version`
+    VG_VERSION=`docker run jenkins-docker-vg-local vg version -s`
     printf "vg-docker-version jenkins-docker-vg-local\n" >> vgci_cfg.tsv
 fi
 
@@ -250,16 +268,22 @@ then
 
     # we publish the results to the archive
     tar czf "${VG_VERSION}_output.tar.gz" vgci-work test-report.xml jenkins/vgci.py jenkins/jenkins.sh vgci_cfg.tsv
-    aws s3 cp --only-show-errors --acl public-read "${VG_VERSION}_output.tar.gz" s3://cgl-pipeline-inputs/vg_cgl/vg_ci/jenkins_output_archives/
+    aws s3 cp --only-show-errors \
+        "${VG_VERSION}_output.tar.gz" "${OUTPUT_DESTINATION}/jenkins_output_archives/" \
+        --grants "read=uri=http://acs.amazonaws.com/groups/global/AllUsers" "full=id=${OUTPUT_OWNER}"
 
     # if we're merging the PR (and not just testing it), we publish results to the baseline
     if [ -z ${ghprbActualCommit} ]
     then
         echo "Updating baseline"
-        aws s3 sync --acl public-read ./vgci-work/ s3://cgl-pipeline-inputs/vg_cgl/vg_ci/jenkins_regression_baseline
-        printf "${VG_VERSION}\n" > vg_version_${VG_VERSION}.txt
-        printf "${ghprbActualCommitAuthor}\n${ghprbPullTitle}\n${ghprbPullLink}\n" >> vg_version_${VG_VERSION}.txt
-        aws s3 cp --only-show-errors --acl public-read vg_version_${VG_VERSION}.txt s3://cgl-pipeline-inputs/vg_cgl/vg_ci/jenkins_regression_baseline/
+        aws s3 sync \
+            ./vgci-work/ "${OUTPUT_DESTINATION}/jenkins_regression_baseline" \
+            --grants "read=uri=http://acs.amazonaws.com/groups/global/AllUsers" "full=id=${OUTPUT_OWNER}"    
+        printf "${VG_VERSION}\n" > "vg_version_${VG_VERSION}.txt"
+        printf "${ghprbActualCommitAuthor}\n${ghprbPullTitle}\n${ghprbPullLink}\n" >> "vg_version_${VG_VERSION}.txt"
+        aws s3 cp --only-show-errors \
+            "vg_version_${VG_VERSION}.txt" "${OUTPUT_DESTINATION}/jenkins_regression_baseline/" \
+            --grants "read=uri=http://acs.amazonaws.com/groups/global/AllUsers" "full=id=${OUTPUT_OWNER}"
     fi
 fi
     

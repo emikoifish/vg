@@ -16,6 +16,7 @@
 #include "position.hpp"
 #include "cached_position.hpp"
 #include "xg_position.hpp"
+#include "distributions.hpp"
 #include "lru_cache.h"
 #include "json2pb.h"
 
@@ -51,7 +52,7 @@ public:
     bool no_Ns;
     // A vector which, if nonempty, gives the names of the paths to restrict simulated reads to.
     vector<string> source_paths;
-    discrete_distribution<> path_sampler; // draw an index in source_paths
+    vg::discrete_distribution<> path_sampler; // draw an index in source_paths
     inline Sampler(xg::XG* x,
             int seed = 0,
             bool forward_only = false,
@@ -112,8 +113,8 @@ public:
                              double base_error,
                              double indel_error,
                              const string& bases,
-                             uniform_real_distribution<double>& rprob,
-                             uniform_int_distribution<int>& rbase);
+                             vg::uniform_real_distribution<double>& rprob,
+                             vg::uniform_int_distribution<int>& rbase);
 
     string alignment_seq(const Alignment& aln);
     
@@ -171,7 +172,7 @@ private:
     private:
         
         default_random_engine prng;
-        unordered_map<From, uniform_int_distribution<size_t>> samplers;
+        unordered_map<From, vg::uniform_int_distribution<size_t>> samplers;
         
         unordered_map<To, size_t> column_of;
         vector<To> value_at;
@@ -192,13 +193,13 @@ private:
     void record_read_pair_quality(const Alignment& aln_1, const Alignment& aln_2);
     /// Indicate that there is no more training data
     void finalize();
-    /// Get a quality string that mimics the training data
-    string sample_read_quality();
-    /// Get a pair of quality strings that mimic the training data
-    pair<string, string> sample_read_quality_pair();
+    /// Get a quality string and a vector of 'N'-masks that mimics the training data
+    pair<string, vector<bool>> sample_read_quality();
+    /// Get a pair of quality strings and vectors of 'N'-masks that mimic the training data
+    pair<pair<string, vector<bool>>, pair<string, vector<bool>>> sample_read_quality_pair();
     /// Wrapped internal function for quality sampling
-    string sample_read_quality_internal(uint8_t first,
-                                        vector<MarkovDistribution<uint8_t, uint8_t>>& transition_distrs);
+    pair<string, vector<bool>> sample_read_quality_internal(pair<uint8_t, bool> first,
+                                                            bool transitions_1);
     
     /// Internal method called by paired and unpaired samplers for both whole-
     /// graph and path sources. Offset and is_reverse are only used (and drive
@@ -245,6 +246,8 @@ private:
     /// can't because we hit a tip or false otherwise
     bool advance_on_graph_by_distance(pos_t& pos, size_t distance);
     
+    /// Mask out bases with 'N's if the mask is true
+    void apply_N_mask(string& sequence, const vector<bool>& n_mask);
     
     /// Returns the position a given distance from the end of the path, walking backwards
     pos_t walk_backwards(const Path& path, size_t distance);
@@ -258,12 +261,12 @@ private:
     /// Memo for Phred -> probability conversion
     vector<double> phred_prob;
     
-    /// A Markov distribution for each read position
-    vector<MarkovDistribution<uint8_t, uint8_t>> transition_distrs_1;
+    /// A Markov distribution for each read position indicating quality and whether the base is an 'N'
+    vector<MarkovDistribution<pair<uint8_t, bool>, pair<uint8_t, bool>>> transition_distrs_1;
     /// A second set of Markov distributions for the second read in a pair
-    vector<MarkovDistribution<uint8_t, uint8_t>> transition_distrs_2;
+    vector<MarkovDistribution<pair<uint8_t, bool>, pair<uint8_t, bool>>> transition_distrs_2;
     /// A distribution for the joint initial qualities of a read pair
-    MarkovDistribution<uint8_t, pair<uint8_t, uint8_t>> joint_initial_distr;
+    MarkovDistribution<pair<uint8_t, bool>, pair<pair<uint8_t, bool>, pair<uint8_t, bool>>> joint_initial_distr;
     
     xg::XG& xg_index;
     
@@ -271,13 +274,13 @@ private:
     LRUCache<id_t, vector<Edge> > edge_cache;
     
     default_random_engine prng;
-    discrete_distribution<> path_sampler;
-    vector<uniform_int_distribution<size_t> > start_pos_samplers;
-    uniform_int_distribution<uint8_t> strand_sampler;
-    uniform_int_distribution<size_t> background_sampler;
-    uniform_int_distribution<size_t> mut_sampler;
-    uniform_real_distribution<double> prob_sampler;
-    normal_distribution<double> insert_sampler;
+    vg::discrete_distribution<> path_sampler;
+    vector<vg::uniform_int_distribution<size_t>> start_pos_samplers;
+    vg::uniform_int_distribution<uint8_t> strand_sampler;
+    vg::uniform_int_distribution<size_t> background_sampler;
+    vg::uniform_int_distribution<size_t> mut_sampler;
+    vg::uniform_real_distribution<double> prob_sampler;
+    vg::normal_distribution<double> insert_sampler;
     
     const double sub_poly_rate;
     const double indel_poly_rate;

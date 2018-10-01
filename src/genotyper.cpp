@@ -24,7 +24,6 @@ void Genotyper::run(AugmentedGraph& augmented_graph,
                     string contig_name,
                     string sample_name,
                     string augmented_file_name,
-                    bool subset_graph,
                     bool output_vcf,
                     bool output_json,
                     int length_override,
@@ -36,6 +35,9 @@ void Genotyper::run(AugmentedGraph& augmented_graph,
     const vector<const Alignment*>& alignments = augmented_graph.get_alignments();
     // And the translator that maps to/from the original unaugmented graph
     Translator& translator = augmented_graph.translator;
+
+    normal_aligners.resize(get_thread_count());
+    quality_aligners.resize(get_thread_count());
 
     if(output_vcf && show_progress) {
 #pragma omp critical (cerr)
@@ -78,21 +80,26 @@ void Genotyper::run(AugmentedGraph& augmented_graph,
 
     // Find all the snarls in either the main graph or the subset, and put them
     // in this SnarlManager
-    SnarlManager manager;
+    SnarlManager manager = CactusSnarlFinder(graph, ref_path_name).find_snarls();
 
-    // We need to decide if we want to work on the full graph or just on the subgraph that has any support.
-    // We make the subset a local out here so it will stick around as long as we
-    // use the SnarlManager.
-    VG subset;
-    if (subset_graph) {
-        subset = make_subset_graph(graph, ref_path_name, reads_by_name); 
-        manager = subset.paths.has_path(ref_path_name) ?
-            CactusSnarlFinder(subset, ref_path_name).find_snarls()
-            : CactusSnarlFinder(subset).find_snarls();
-    } else {
-        algorithms::sort(&graph);
-        manager = CactusSnarlFinder(graph, ref_path_name).find_snarls();
-    }
+    // TODO: I've removed this option because it has the chance to create incorrect Snarls from the subset
+    // graph that are not actually snarls in the full graph. If we are going to retain this feature, we need
+    // to use the subset graph throughout the genotyping process, but that's currently not possible because
+    // the rest of the code uses an AugmentedGraph instead of a VG.
+    
+//    // We need to decide if we want to work on the full graph or just on the subgraph that has any support.
+//    // We make the subset a local out here so it will stick around as long as we
+//    // use the SnarlManager.
+//    VG subset;
+//    if (subset_graph) {
+//        subset = make_subset_graph(graph, ref_path_name, reads_by_name); 
+//        manager = subset.paths.has_path(ref_path_name) ?
+//            CactusSnarlFinder(subset, ref_path_name).find_snarls()
+//            : CactusSnarlFinder(subset).find_snarls();
+//    } else {
+//        algorithms::sort(&graph);
+//        manager = CactusSnarlFinder(graph, ref_path_name).find_snarls();
+//    }
 
     if(show_progress) {
         // Count up the ultrabubbles
@@ -644,6 +651,10 @@ map<const Alignment*, vector<Genotyper::Affinity>>
 
     // Grab our thread ID, which determines which aligner we get.
     int tid = omp_get_thread_num();
+    
+    Aligner& aligner = normal_aligners[tid];
+    QualAdjAligner& qa_aligner = quality_aligners[tid];
+    vector<MaximalExactMatch> mems; // to make sure we're using right align() interface.
 
     // We're going to build this up gradually, appending to all the vectors.
     map<const Alignment*, vector<Affinity>> to_return;
@@ -803,13 +814,12 @@ map<const Alignment*, vector<Genotyper::Affinity>>
 
             if(read->sequence().size() == read->quality().size()) {
                 // Re-align a copy to this graph (using quality-adjusted alignment).
-                QualAdjAligner qa_aligner;
-                aligned_fwd = allele_graph.align_qual_adjusted(*read, &qa_aligner);
-                aligned_rev = allele_graph.align(reverse_complement_alignment(*read, get_node_size), &qa_aligner);
+                aligned_fwd = allele_graph.align_qual_adjusted(*read, &qa_aligner, mems);
+                aligned_rev = allele_graph.align_qual_adjusted(reverse_complement_alignment(*read, get_node_size), &qa_aligner, mems);
             } else {
                 // If we don't have the right number of quality scores, use un-adjusted alignment instead.
-                aligned_fwd = allele_graph.align(*read);
-                aligned_rev = allele_graph.align(reverse_complement_alignment(*read, get_node_size));
+                aligned_fwd = allele_graph.align(*read, &aligner, mems);
+                aligned_rev = allele_graph.align(reverse_complement_alignment(*read, get_node_size), &aligner, mems);
             }
             // Pick the best alignment, and emit in original orientation
             Alignment aligned = (aligned_rev.score() > aligned_fwd.score()) ? reverse_complement_alignment(aligned_rev, get_node_size) : aligned_fwd;
@@ -836,11 +846,11 @@ map<const Alignment*, vector<Genotyper::Affinity>>
             // Compute the unnormalized likelihood of the read given the allele graph.
             if(read->sequence().size() == read->quality().size()) {
                 // Use the quality-adjusted default scoring system
-                affinity.likelihood_ln = quality_aligner.score_to_unnormalized_likelihood_ln(aligned.score());
+                affinity.likelihood_ln = qa_aligner.score_to_unnormalized_likelihood_ln(aligned.score());
             } else {
                 // We will have aligned without quality adjustment, so interpret
                 // score in terms of the normal scoring parameters.
-                affinity.likelihood_ln = normal_aligner.score_to_unnormalized_likelihood_ln(aligned.score());
+                affinity.likelihood_ln = aligner.score_to_unnormalized_likelihood_ln(aligned.score());
             }
 
             // Get the NodeTraversals for the winning alignment through the snarl.
@@ -2005,11 +2015,12 @@ Genotyper::locus_to_variant(VG& graph,
            locus.support(best_genotype.allele(i)).reverse() < min_unique_per_strand) {
             // If there's not enough support for that allele in an orientation, skip the snarl. 
 
+#ifdef debug_verbose
 #pragma omp critical (cerr)
             cerr << "Warning: dropping locus from VCF due to insufficient per-strand unique support "
                  << locus.support(best_genotype.allele(i)).forward() << ", " 
                  << locus.support(best_genotype.allele(i)).reverse() << endl;
-
+#endif
             return to_return;
         }
     }

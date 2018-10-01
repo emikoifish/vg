@@ -12,9 +12,9 @@ void Sampler::set_source_paths(const vector<string>& source_paths) {
         for (auto& source_path : source_paths) {
             path_lengths.push_back(xgidx->path_length(source_path));
         }
-        path_sampler = discrete_distribution<>(path_lengths.begin(), path_lengths.end());
+        path_sampler = vg::discrete_distribution<>(path_lengths.begin(), path_lengths.end());
     } else {
-        path_sampler = discrete_distribution<>();
+        path_sampler = vg::discrete_distribution<>();
     }
 }
 
@@ -40,10 +40,10 @@ pos_t position_at(xg::XG* xgidx, const string& path_name, const size_t& path_off
 
 pos_t Sampler::position(void) {
     // We sample from the entire graph sequence, 1-based.
-    uniform_int_distribution<size_t> xdist(1, xgidx->seq_length);
+    vg::uniform_int_distribution<size_t> xdist(1, xgidx->seq_length);
     size_t offset = xdist(rng);
     id_t id = xgidx->node_at_seq_pos(offset);
-    uniform_int_distribution<size_t> flip(0, 1);
+    vg::uniform_int_distribution<size_t> flip(0, 1);
     bool rev = forward_only ? false : flip(rng);
     // 1-0 base conversion
     size_t node_offset = offset - xgidx->node_start(id) - 1;
@@ -61,7 +61,7 @@ string Sampler::sequence(size_t length) {
         vector<pos_t> nextp;
         for (auto& n : nextc) nextp.push_back(n.first);
         // pick one at random
-        uniform_int_distribution<int> next_dist(0, nextc.size()-1);
+        vg::uniform_int_distribution<int> next_dist(0, nextc.size()-1);
         // update our position
         pos = nextp.at(next_dist(rng));
         // append to our sequence
@@ -76,8 +76,8 @@ vector<Edit> Sampler::mutate_edit(const Edit& edit,
                                   double base_error,
                                   double indel_error,
                                   const string& bases,
-                                  uniform_real_distribution<double>& rprob,
-                                  uniform_int_distribution<int>& rbase) {
+                                  vg::uniform_real_distribution<double>& rprob,
+                                  vg::uniform_int_distribution<int>& rbase) {
 
     // we will build up a mapping representing the modified edit
     Mapping new_mapping;
@@ -253,8 +253,8 @@ Alignment Sampler::mutate(const Alignment& aln,
     if (base_error == 0 && indel_error == 0) return aln;
 
     string bases = "ATGC";
-    uniform_real_distribution<double> rprob(0, 1);
-    uniform_int_distribution<int> rbase(0, 3);
+    vg::uniform_real_distribution<double> rprob(0, 1);
+    vg::uniform_int_distribution<int> rbase(0, 3);
 
     Alignment mutaln;
     for (size_t i = 0; i < aln.path().mapping_size(); ++i) {
@@ -301,7 +301,7 @@ string Sampler::alignment_seq(const Alignment& aln) {
 
 vector<Alignment> Sampler::alignment_pair(size_t read_length, size_t fragment_length, double fragment_std_dev, double base_error, double indel_error) {
     // simulate forward/reverse pair by first simulating a long read
-    normal_distribution<> norm_dist(fragment_length, fragment_std_dev);
+    vg::normal_distribution<> norm_dist(fragment_length, fragment_std_dev);
     // bound at read length so we always get enough sequence
     int frag_len = max((int)read_length, (int)round(norm_dist(rng)));
     auto fragment = alignment_with_error(frag_len, base_error, indel_error);
@@ -345,9 +345,9 @@ Alignment Sampler::alignment(size_t length) {
 Alignment Sampler::alignment_to_path(const string& source_path, size_t length) {
 
     // Pick a starting point along the path and an orientation
-    uniform_int_distribution<size_t> xdist(0, xgidx->path_length(source_path) - 1);
+    vg::uniform_int_distribution<size_t> xdist(0, xgidx->path_length(source_path) - 1);
     size_t path_offset = xdist(rng);
-    uniform_int_distribution<size_t> flip(0, 1);
+    vg::uniform_int_distribution<size_t> flip(0, 1);
     bool rev = forward_only ? false : flip(rng);
     
     // We will fill in this string
@@ -434,7 +434,7 @@ Alignment Sampler::alignment_to_graph(size_t length) {
         vector<pos_t> nextp;
         for (auto& n : nextc) nextp.push_back(n.first);
         // pick one at random
-        uniform_int_distribution<int> next_dist(0, nextc.size()-1);
+        vg::uniform_int_distribution<int> next_dist(0, nextc.size()-1);
         // update our position
         pos = nextp.at(next_dist(rng));
         // update our char
@@ -587,7 +587,7 @@ NGSSimulator::NGSSimulator(xg::XG& xg_index,
             path_sizes.push_back(xg_index.path_length(source_path));
             start_pos_samplers.emplace_back(0, path_sizes.back() - 1);
         }
-        path_sampler = discrete_distribution<>(path_sizes.begin(), path_sizes.end());
+        path_sampler = vg::discrete_distribution<>(path_sizes.begin(), path_sizes.end());
     }
     
     if (substition_polymorphism_rate < 0.0 || substition_polymorphism_rate > 1.0
@@ -688,13 +688,23 @@ NGSSimulator::NGSSimulator(xg::XG& xg_index,
 
 Alignment NGSSimulator::sample_read() {
     
+    
     Alignment aln;
     // sample a quality string based on the trained distribution
-    aln.set_quality(sample_read_quality());
+    pair<string, vector<bool>> qual_and_masks = sample_read_quality();
     
 #ifdef debug_ngs_sim
-    cerr << "got quality string " << string_quality_short_to_char(aln.quality()) << endl;
+    cerr << "sampled qualities and N-mask:" << endl;
+    cerr << string_quality_short_to_char(qual_and_masks.first) << endl;
+    for (bool mask : qual_and_masks.second) {
+        cerr << (mask ? "1" : "0");
+    }
+    cerr << endl;
 #endif
+    
+    assert(qual_and_masks.first.size() == qual_and_masks.second.size());
+    
+    aln.set_quality(qual_and_masks.first);
     
     // attempt samples until we get one that succeeds without walking
     // off the end of the graph
@@ -721,6 +731,9 @@ Alignment NGSSimulator::sample_read() {
         }
     }
     
+    // mask out any of the sequence that we sampled to be an 'N'
+    apply_N_mask(*aln.mutable_sequence(), qual_and_masks.second);
+    
     aln.set_name(get_read_name());
     xg_annotate_with_initial_path_positions(aln, true, false, &xg_index);
     return aln;
@@ -728,9 +741,28 @@ Alignment NGSSimulator::sample_read() {
 
 pair<Alignment, Alignment> NGSSimulator::sample_read_pair() {
     pair<Alignment, Alignment> aln_pair;
-    pair<string, string> qual_pair = sample_read_quality_pair();
-    aln_pair.first.set_quality(qual_pair.first);
-    aln_pair.second.set_quality(qual_pair.second);
+    pair<pair<string, vector<bool>>, pair<string, vector<bool>>> qual_and_mask_pair = sample_read_quality_pair();
+    
+#ifdef debug_ngs_sim
+    cerr << "sampled qualities and N-masks:" << endl;
+    cerr << string_quality_short_to_char(qual_and_mask_pair.first.first) << endl;
+    for (bool mask : qual_and_mask_pair.first.second) {
+        cerr << (mask ? "1" : "0");
+    }
+    cerr << endl;
+    cerr << string_quality_short_to_char(qual_and_mask_pair.second.first) << endl;
+    for (bool mask : qual_and_mask_pair.second.second) {
+        cerr << (mask ? "1" : "0");
+    }
+    cerr << endl;
+#endif
+
+    
+    assert(qual_and_mask_pair.first.first.size() == qual_and_mask_pair.first.second.size());
+    assert(qual_and_mask_pair.second.first.size() == qual_and_mask_pair.second.second.size());
+    
+    aln_pair.first.set_quality(qual_and_mask_pair.first.first);
+    aln_pair.second.set_quality(qual_and_mask_pair.second.first);
     
     // reverse the quality string so that it acts like it's reading from the opposite end
     // when we walk forward from the beginning of the first read
@@ -789,7 +821,6 @@ pair<Alignment, Alignment> NGSSimulator::sample_read_pair() {
         // align the second end starting at the walked position
         sample_read_internal(aln_pair.second, offset, is_reverse, pos, source_path); 
         
-        
         if (retry_on_Ns) {
             if (aln_pair.second.sequence().find('N') != string::npos) {
                 aln_pair.second.clear_path();
@@ -802,6 +833,10 @@ pair<Alignment, Alignment> NGSSimulator::sample_read_pair() {
     aln_pair.second = reverse_complement_alignment(aln_pair.second, [&](id_t node_id) {
         return xg_index.node_length(node_id);
     });
+    
+    // mask out any of the sequence that we sampled to be an 'N'
+    apply_N_mask(*aln_pair.first.mutable_sequence(), qual_and_mask_pair.first.second);
+    apply_N_mask(*aln_pair.second.mutable_sequence(), qual_and_mask_pair.second.second);
     
     string name = get_read_name();
     aln_pair.first.set_name(name + "_1");
@@ -941,7 +976,7 @@ bool NGSSimulator::advance_on_graph(pos_t& pos, char& graph_char) {
         return true;
     }
     
-    uniform_int_distribution<size_t> pos_distr(0, next_pos_chars.size() - 1);
+    vg::uniform_int_distribution<size_t> pos_distr(0, next_pos_chars.size() - 1);
     size_t next = pos_distr(prng);
     auto iter = next_pos_chars.begin();
     for (size_t i = 0; i != next; i++) {
@@ -999,7 +1034,7 @@ bool NGSSimulator::advance_on_graph_by_distance(pos_t& pos, size_t distance) {
         if (edges.empty()) {
             return true;
         }
-        size_t choice = uniform_int_distribution<size_t>(0, edges.size() - 1)(prng);
+        size_t choice = vg::uniform_int_distribution<size_t>(0, edges.size() - 1)(prng);
         Edge& edge = edges[choice];
         if (id(pos) == edge.from() && is_rev(pos) == edge.from_start()) {
             get_id(pos) = edge.to();
@@ -1307,6 +1342,7 @@ string NGSSimulator::get_read_name() {
 
 void NGSSimulator::record_read_quality(const Alignment& aln, bool read_2) {
     const string& quality = aln.quality();
+    const string& sequence = aln.sequence();
     auto& transition_distrs = read_2 ? transition_distrs_2 : transition_distrs_1;
     if (quality.empty()) {
         return;
@@ -1314,58 +1350,81 @@ void NGSSimulator::record_read_quality(const Alignment& aln, bool read_2) {
     while (transition_distrs.size() < quality.size()) {
         transition_distrs.emplace_back(seed ? seed + transition_distrs.size() + 1 : random_device()());
     }
-    transition_distrs[0].record_transition(0, quality[0]);
+    // record the initial quality and N-mask
+    transition_distrs[0].record_transition(pair<uint8_t, bool>(0, false),
+                                           pair<uint8_t, bool>(quality[0], sequence[0] == 'N'));
+    // record the subsequent quality and N-mask transitions
     for (size_t i = 1; i < transition_distrs.size(); i++) {
-        transition_distrs[i].record_transition(quality[i - 1], quality[i]);
+        transition_distrs[i].record_transition(pair<uint8_t, bool>(quality[i - 1], sequence[i - 1] == 'N'),
+                                               pair<uint8_t, bool>(quality[i], sequence[i] == 'N'));
     }
 }
     
 void NGSSimulator::record_read_pair_quality(const Alignment& aln_1, const Alignment& aln_2) {
+    // record the transitions within the reads separates
     record_read_quality(aln_1, false);
     record_read_quality(aln_2, true);
+    // record the joint distribution of the first quality and N-mask
     if (!aln_1.quality().empty() && !aln_2.quality().empty()) {
-        joint_initial_distr.record_transition(0, make_pair<uint8_t, uint8_t>(aln_1.quality()[0], aln_2.quality()[0]));
+        joint_initial_distr.record_transition(pair<uint8_t, bool>(0, false),
+                                              make_pair(pair<uint8_t, bool>(aln_1.quality()[0], aln_1.sequence()[0] == 'N'),
+                                                        pair<uint8_t, bool>(aln_2.quality()[0], aln_2.sequence()[0] == 'N')));
     }
 }
 
 void NGSSimulator::finalize() {
-    for (MarkovDistribution<uint8_t, uint8_t>& markov_distr : transition_distrs_1) {
+    for (auto& markov_distr : transition_distrs_1) {
         markov_distr.finalize();
     }
-    for (MarkovDistribution<uint8_t, uint8_t>& markov_distr : transition_distrs_2) {
+    for (auto& markov_distr : transition_distrs_2) {
         markov_distr.finalize();
     }
     joint_initial_distr.finalize();
 }
 
-string NGSSimulator::sample_read_quality() {
+pair<string, vector<bool>> NGSSimulator::sample_read_quality() {
     // only use the first trained distribution (on the assumption that it better reflects the properties of
     // single-ended sequencing)
-    return sample_read_quality_internal(transition_distrs_1[0].sample_transition(0),  transition_distrs_1);
+    return sample_read_quality_internal(transition_distrs_1[0].sample_transition(pair<uint8_t, bool>(0, false)),
+                                        true);
 }
     
-pair<string, string> NGSSimulator::sample_read_quality_pair() {
+pair<pair<string, vector<bool>>, pair<string, vector<bool>>> NGSSimulator::sample_read_quality_pair() {
     if (transition_distrs_2.empty()) {
         // no paired training data, sample qual strings independently
         return make_pair(sample_read_quality(), sample_read_quality());
     }
     else {
         // paired training data, sample the start quality jointly
-        pair<uint8_t, uint8_t> first_quals = joint_initial_distr.sample_transition(0);
-        return make_pair(sample_read_quality_internal(first_quals.first, transition_distrs_1),
-                         sample_read_quality_internal(first_quals.second, transition_distrs_2));
+        auto first_quals_and_masks = joint_initial_distr.sample_transition(pair<uint8_t, bool>(0, false));
+        return make_pair(sample_read_quality_internal(first_quals_and_masks.first, true),
+                         sample_read_quality_internal(first_quals_and_masks.second, false));
     }
 }
     
-string NGSSimulator::sample_read_quality_internal(uint8_t first,
-                                                  vector<MarkovDistribution<uint8_t, uint8_t>>& transition_distrs) {
-    string quality(transition_distrs.size(), first);
-    uint8_t at = first;
+                                
+pair<string, vector<bool>> NGSSimulator::sample_read_quality_internal(pair<uint8_t, bool> first,
+                                                                      bool transitions_1) {
+    
+    auto& transition_distrs = transitions_1 ? transition_distrs_1 : transition_distrs_2;
+    string quality(transition_distrs.size(), first.first);
+    vector<bool> n_masks(transition_distrs.size(), first.second);
+    pair<uint8_t, bool> at = first;
     for (size_t i = 1; i < transition_distrs.size(); i++) {
         at = transition_distrs[i].sample_transition(at);
-        quality[i] = at;
+        quality[i] = at.first;
+        n_masks[i] = at.second;
     }
-    return quality;
+    return make_pair(quality, n_masks);
+}
+                                              
+void NGSSimulator::apply_N_mask(string& sequence, const vector<bool>& n_mask) {
+    assert(sequence.size() == n_mask.size());
+    for (size_t i = 0; i < n_mask.size(); i++) {
+        if (n_mask[i]) {
+            sequence[i] = 'N';
+        }
+    }
 }
     
 template<class From, class To>
@@ -1397,7 +1456,7 @@ void NGSSimulator::MarkovDistribution<From, To>::finalize() {
             cond_distr.second[i] += cond_distr.second[i - 1];
         }
         
-        samplers[cond_distr.first] = uniform_int_distribution<size_t>(0, cond_distr.second.back() - 1);
+        samplers[cond_distr.first] = vg::uniform_int_distribution<size_t>(1, cond_distr.second.back());
     }
 }
 
@@ -1405,11 +1464,10 @@ template<class From, class To>
 To NGSSimulator::MarkovDistribution<From, To>::sample_transition(From from) {
     // return randomly if a transition has never been observed
     if (!cond_distrs.count(from)) {
-        return value_at[uniform_int_distribution<size_t>(0, value_at.size() - 1)(prng)];
+        return value_at[vg::uniform_int_distribution<size_t>(0, value_at.size() - 1)(prng)];
     }
     
     size_t sample_val = samplers[from](prng);
-    
     vector<size_t>& cdf = cond_distrs[from];
     
     if (sample_val <= cdf[0]) {
