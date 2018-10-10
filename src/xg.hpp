@@ -629,17 +629,17 @@ private:
     /// 
     /// Encoding designed for efficient compression, cache locality, and relativistic traversal of the graph.
     ///
-    /// node := { header, edges_to, edges_from }
-    /// header := { node_id, node_start, node_length, edges_to_count, edges_from_count }
+    /// node := { header, edges_start_side, edges_end_side }
+    /// header := { node_id, node_start, node_length, edges_start_side_count, edges_end_side_count }
     /// node_id := integer
     /// node_start := integer (offset in s_iv)
     /// node_length := integer
-    /// edges_to_count := integer
-    /// edges_from_count := integer
-    /// edges_to := { edge_to, ... }
-    /// edges_from := { edge_from, ... }
-    /// edge_to := { offset_to_previous_node, edge_type }
-    /// edge_to := { offset_to_next_node, edge_type }
+    /// edges_start_side_count := integer
+    /// edges_end_side_count := integer
+    /// start_side := { edges_start_side, ... }
+    /// end_side := { edges_end_side, ... }
+    /// edges_start_side := { offset_to_node_with_edge_on_start_side, edge_type }
+    /// edges_end_side := { offset_to_node_with_edge_on_end_side, edge_type }
     int_vector<> g_iv;
     /// delimit node records to allow lookup of nodes in g_civ by rank
     bit_vector g_bv;
