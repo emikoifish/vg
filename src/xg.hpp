@@ -648,8 +648,8 @@ private:
     const static int G_NODE_ID_OFFSET = 0;
     const static int G_NODE_SEQ_START_OFFSET = 1;
     const static int G_NODE_LENGTH_OFFSET = 2;
-    const static int G_NODE_TO_COUNT_OFFSET = 3;
-    const static int G_NODE_FROM_COUNT_OFFSET = 4;
+    const static int G_NODE_START_SIDE_COUNT_OFFSET = 3;
+    const static int G_NODE_END_SIDE_COUNT_OFFSET = 4;
     const static int G_NODE_HEADER_OFFSET = 5;
     
     const static int G_EDGE_OFFSET_OFFSET = 0;

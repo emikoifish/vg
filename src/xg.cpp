@@ -283,8 +283,8 @@ void XG::convert_old_edge_to_new(int_vector<>& g_iv_old, bit_vector& g_bv_old, r
     // find all the self reversing sides
     for (int64_t i = 0; i < g_iv_old_size; i += G_NODE_HEADER_OFFSET) {
         int64_t on_node = g_iv_old[i];
-        int edges_to_count = g_iv_old[i+G_NODE_TO_COUNT_OFFSET];
-        int edges_from_count = g_iv_old[i+G_NODE_FROM_COUNT_OFFSET];
+        int edges_to_count = g_iv_old[i+G_NODE_START_SIDE_COUNT_OFFSET];
+        int edges_from_count = g_iv_old[i+G_NODE_END_SIDE_COUNT_OFFSET];
         int sequence_size = g_iv_old[i+G_NODE_LENGTH_OFFSET];
         int64_t t = i + G_NODE_HEADER_OFFSET;
         int64_t f = i + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_to_count;
@@ -330,10 +330,10 @@ void XG::convert_old_edge_to_new(int_vector<>& g_iv_old, bit_vector& g_bv_old, r
         vector<side_t> start_side;
         vector<side_t> end_side;
         int64_t g = i;
-        // get G_NODE_TO_COUNT_OFFSET from old g_iv
-        int edges_to_count = g_iv_old[g+G_NODE_TO_COUNT_OFFSET];
-        // get G_NODE_FROM_COUNT_OFFSET from old g_iv
-        int edges_from_count = g_iv_old[g+G_NODE_FROM_COUNT_OFFSET];
+        // get G_NODE_START_SIDE_COUNT_OFFSET from old g_iv
+        int edges_to_count = g_iv_old[g+G_NODE_START_SIDE_COUNT_OFFSET];
+        // get G_NODE_END_SIDE_COUNT_OFFSET from old g_iv
+        int edges_from_count = g_iv_old[g+G_NODE_END_SIDE_COUNT_OFFSET];
         int sequence_size = g_iv_old[g+G_NODE_LENGTH_OFFSET];
         int64_t t = g + G_NODE_HEADER_OFFSET;
         int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_to_count;
@@ -404,8 +404,8 @@ void XG::convert_old_edge_to_new(int_vector<>& g_iv_old, bit_vector& g_bv_old, r
         // find the start of the node's record in g_iv
         int64_t g = g_bv_select(id_to_rank(id));
         // get to the edges to
-        int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-        int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+        int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+        int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
         int64_t t = g + G_NODE_HEADER_OFFSET;
         int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
         for (int64_t j = t; j < f; ) {
@@ -1033,8 +1033,8 @@ void XG::build(vector<pair<id_t, string> >& node_label,
         // find the start of the node's record in g_iv
         int64_t g = g_bv_select(id_to_rank(id));
         // get to the edges to
-        int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-        int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+        int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+        int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
         int64_t t = g + G_NODE_HEADER_OFFSET;
         int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
         for (int64_t j = t; j < f; ) {
@@ -1236,8 +1236,8 @@ void XG::build(vector<pair<id_t, string> >& node_label,
             // find the start of the node's record in g_iv
             int64_t g = g_bv_select(id_to_rank(id));
             // get to the edges to
-            int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-            int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+            int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+            int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
             int sequence_size = g_iv[g+G_NODE_LENGTH_OFFSET];
             size_t seq_start = g_iv[g+G_NODE_SEQ_START_OFFSET];
             cerr << id << " ";
@@ -1712,8 +1712,8 @@ Graph XG::node_subgraph_id(int64_t id) const {
 /// returns the graph with graph offsets rather than ids on edges and nodes
 Graph XG::node_subgraph_g(int64_t g) const {
     Graph graph;
-    int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-    int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+    int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+    int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
     int sequence_size = g_iv[g+G_NODE_LENGTH_OFFSET];
     size_t seq_start = g_iv[g+G_NODE_SEQ_START_OFFSET];
     string sequence; sequence.resize(sequence_size);
@@ -1897,8 +1897,8 @@ bool XG::follow_edges(const handle_t& handle, bool go_left, const function<bool(
     bool is_reverse = get_is_reverse(handle);
 
     // How many edges are there of each type?
-    size_t edges_start_side_count = g_iv[g + G_NODE_TO_COUNT_OFFSET];
-    size_t edges_end_side_count = g_iv[g + G_NODE_FROM_COUNT_OFFSET];
+    size_t edges_start_side_count = g_iv[g + G_NODE_START_SIDE_COUNT_OFFSET];
+    size_t edges_end_side_count = g_iv[g + G_NODE_END_SIDE_COUNT_OFFSET];
     
     // Where does each edge run start?
     size_t start_side_start = g + G_NODE_HEADER_OFFSET;
@@ -1936,8 +1936,8 @@ void XG::for_each_handle(const function<bool(const handle_t&)>& iteratee, bool p
         }
         
         // How many edges are there of each type on this record?
-        size_t edges_start_side_count = g_iv[g + G_NODE_TO_COUNT_OFFSET];
-        size_t edges_end_side_count = g_iv[g + G_NODE_FROM_COUNT_OFFSET];
+        size_t edges_start_side_count = g_iv[g + G_NODE_START_SIDE_COUNT_OFFSET];
+        size_t edges_end_side_count = g_iv[g + G_NODE_END_SIDE_COUNT_OFFSET];
         
         // This record is the header plus all the edge records it contains
         entry_size = G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * (edges_start_side_count + edges_end_side_count);
@@ -2046,8 +2046,8 @@ size_t XG::node_size() const {
 
 vector<Edge> XG::edges_of(int64_t id) const {
     size_t g = g_bv_select(id_to_rank(id));
-    int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-    int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+    int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+    int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
     int64_t t = g + G_NODE_HEADER_OFFSET;
     int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
     vector<Edge> edges;
@@ -2089,11 +2089,11 @@ vector<Edge> XG::edges_on_end(int64_t id) const {
 }
 
 int XG::indegree(int64_t id) const {
-  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_TO_COUNT_OFFSET];
+  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_START_SIDE_COUNT_OFFSET];
 }
 
 int XG::outdegree(int64_t id) const {
-  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_FROM_COUNT_OFFSET];
+  return g_iv[g_bv_select(id_to_rank(id)) + G_NODE_END_SIDE_COUNT_OFFSET];
 }
 
 size_t XG::max_node_rank(void) const {
@@ -2145,8 +2145,8 @@ size_t XG::edge_graph_idx(const Edge& edge_in) const {
     auto edge = canonicalize(edge_in);
     int64_t id = edge.from();
     size_t g = g_bv_select(id_to_rank(id));
-    int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-    int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
+    int edges_start_side_count = g_iv[g+G_NODE_START_SIDE_COUNT_OFFSET];
+    int edges_end_side_count = g_iv[g+G_NODE_END_SIDE_COUNT_OFFSET];
     int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
     int64_t e = f + G_EDGE_LENGTH * edges_end_side_count;
     vector<Edge> edges;
