@@ -172,8 +172,6 @@ public:
     bool has_edge(const Edge& edge) const;
     
     vector<Edge> edges_of(int64_t id) const;
-    vector<Edge> edges_start_side(int64_t id) const;
-    vector<Edge> edges_end_side(int64_t id) const;
     vector<Edge> edges_on_start(int64_t id) const;
     vector<Edge> edges_on_end(int64_t id) const;
     int indegree(int64_t id) const;

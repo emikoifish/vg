@@ -2068,44 +2068,6 @@ vector<Edge> XG::edges_of(int64_t id) const {
     return edges;
 }
 
-vector<Edge> XG::edges_start_side(int64_t id) const {
-    size_t g = g_bv_select(id_to_rank(id));
-    int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-    int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
-    int64_t t = g + G_NODE_HEADER_OFFSET;
-    int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
-    vector<Edge> edges;
-    for (int64_t j = t; j < f; ) {
-        int64_t start = g+g_iv[j++];
-        int type = g_iv[j++];
-        edges.push_back(edge_from_encoding(start, g, type, true));
-    }
-    for (auto& edge : edges) { 
-        edge.set_from(g_iv[edge.from()+G_NODE_ID_OFFSET]);
-        edge.set_to(g_iv[edge.to()+G_NODE_ID_OFFSET]);
-    }
-    return edges;
-}
-
-vector<Edge> XG::edges_end_side(int64_t id) const {
-    size_t g = g_bv_select(id_to_rank(id));
-    int edges_start_side_count = g_iv[g+G_NODE_TO_COUNT_OFFSET];
-    int edges_end_side_count = g_iv[g+G_NODE_FROM_COUNT_OFFSET];
-    int64_t f = g + G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * edges_start_side_count;
-    int64_t e = f + G_EDGE_LENGTH * edges_end_side_count;
-    vector<Edge> edges;
-    for (int64_t j = f; j < e; ) {
-        int64_t end = g+g_iv[j++];
-        int type = g_iv[j++];
-        edges.push_back(edge_from_encoding(g, end, type, false));
-    }
-    for (auto& edge : edges) { 
-        edge.set_from(g_iv[edge.from()+G_NODE_ID_OFFSET]);
-        edge.set_to(g_iv[edge.to()+G_NODE_ID_OFFSET]);
-    }
-    return edges;
-}
-
 vector<Edge> XG::edges_on_start(int64_t id) const {
     vector<Edge> edges;
     for (auto& edge : edges_of(id)) {
@@ -2439,9 +2401,9 @@ void XG::expand_context_by_steps(Graph& g, size_t steps, bool add_paths,
             if (expand_end_side && expand_start_side) {
                 edges_todo = edges_of(id);
             } else if (expand_end_side) {
-                edges_todo = edges_end_side(id);
+                edges_todo = edges_on_end(id);
             } else if (expand_start_side) {
-                edges_todo = edges_start_side(id);
+                edges_todo = edges_on_start(id);
             } else {
                 cerr << "[xg] error: Requested neither start side nor end side context expansion" << endl;
                 exit(1);
@@ -2493,7 +2455,7 @@ void XG::expand_context_by_steps(Graph& g, size_t steps, bool add_paths,
     // subgraph, because there might be edges connecting the nodes you have that
     // you don't see.
     for(auto& n : last_step_nodes) {
-        for (auto& edge : edges_end_side(n)) {
+        for (auto& edge : edges_on_end(n)) {
             if(last_step_nodes.count(edge.to())) {
                 // This edge connects two nodes that were added on the last
                 // step, and so wouldn't have been found by the main loop.
@@ -2509,7 +2471,7 @@ void XG::expand_context_by_steps(Graph& g, size_t steps, bool add_paths,
                 }
             }
         }
-        for (auto& edge : edges_start_side(n)) {
+        for (auto& edge : edges_on_start(n)) {
             if(last_step_nodes.count(edge.from())) {
                 // This edge connects two nodes that were added on the last
                 // step, and so wouldn't have been found by the main loop.
@@ -2572,9 +2534,9 @@ void XG::expand_context_by_length(Graph& g, size_t length, bool add_paths,
             if (expand_end_side && expand_start_side) {
                 edges_todo = edges_of(id);
             } else if (expand_end_side) {
-                edges_todo = edges_end_side(id);
+                edges_todo = edges_on_end(id);
             } else if (expand_start_side) {
-                edges_todo = edges_start_side(id);
+                edges_todo = edges_on_start(id);
             } else {
                 cerr << "[xg] error: Requested neither start side nor end side context expansion" << endl;
                 exit(1);
@@ -3748,11 +3710,11 @@ void XG::get_path_range(const string& name, int64_t start, int64_t stop, Graph& 
 
     for_path_range(name, start, stop, [&](int64_t id) {
             nodes.insert(id);
-            for (auto& e : edges_end_side(id)) {
+            for (auto& e : edges_on_end(id)) {
                 // For each edge where this is a from node, turn it into a pair of side_ts, each of which holds an id and an is_end flag.
                 edges.insert(make_pair(make_side(e.from(), !e.from_start()), make_side(e.to(), e.to_end())));
             }
-            for (auto& e : edges_start_side(id)) {
+            for (auto& e : edges_on_start(id)) {
                 // Do the same for the edges where this is a to node
                 edges.insert(make_pair(make_side(e.from(), !e.from_start()), make_side(e.to(), e.to_end())));
             }
