@@ -189,8 +189,8 @@ int main_paths(int argc, char** argv) {
             for (gbwt::size_type id = 1; id <= gbwt_index->sequences()/2; id += 1) {
                 thread_ids.push_back(id);
             }
-        } else if (!thread_prefix.empty()) {
-            thread_ids = xg_index->threads_named_starting(thread_prefix);
+//        } else if (!thread_prefix.empty()) {
+//            thread_ids = xg_index->threads_named_starting(thread_prefix);
         }
         
         // We may need to emit a stream of Alignemnts

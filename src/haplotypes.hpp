@@ -62,8 +62,20 @@ namespace haplo {
 // If this global is set, warn the user when scoring fails
 extern bool warn_on_score_fail;
  
-using thread_t = vector<xg::XG::ThreadMapping>;
+//using thread_t = vector<xg::XG::ThreadMapping>;
 
+//moved from xg
+struct ThreadMapping {
+    int64_t node_id;
+    bool is_reverse;
+    /// We need comparison for deduplication in sets and canonically orienting threads
+    bool operator<(const ThreadMapping& other) const {
+        return tie(node_id, is_reverse) < tie(other.node_id, other.is_reverse);
+    }
+};
+
+using thread_t = vector<ThreadMapping>;
+    
 namespace haploMath{
   double logsum(double a, double b);
   double logdiff(double a, double b);
@@ -126,44 +138,44 @@ private:
   vector<vg::Edge> out;
 public:
   haplo_DP_edge_memo();                      // for constructing null edge_memos
-  haplo_DP_edge_memo(xg::XG& graph, 
-                     xg::XG::ThreadMapping last_node, 
-                     xg::XG::ThreadMapping node);
+//  haplo_DP_edge_memo(xg::XG& graph,
+//                     xg::XG::ThreadMapping last_node,
+//                     xg::XG::ThreadMapping node);
   const vector<vg::Edge>& edges_in() const;
   const vector<vg::Edge>& edges_out() const;
   bool is_null() const;
-  static bool has_edge(xg::XG& graph, xg::XG::ThreadMapping old_node, xg::XG::ThreadMapping new_node);
+//  static bool has_edge(xg::XG& graph, xg::XG::ThreadMapping old_node, xg::XG::ThreadMapping new_node);
 };
 
 // -----------------------------------------------------------------------------
 
 class hDP_graph_accessor {
 public:
-  const xg::XG::ThreadMapping old_node;
-  const xg::XG::ThreadMapping new_node;
+  const ThreadMapping old_node;
+  const ThreadMapping new_node;
   const haplo_DP_edge_memo edges;
   const xg::XG& graph;
   haploMath::RRMemo& memo;
-  
+
   // accessor for noninitial nodes in a haplotype
-  hDP_graph_accessor(xg::XG& graph, 
-                     xg::XG::ThreadMapping old_node, 
-                     xg::XG::ThreadMapping new_node, 
+  hDP_graph_accessor(xg::XG& graph,
+                     ThreadMapping old_node,
+                     ThreadMapping new_node,
                      haploMath::RRMemo& memo);
-  // accessor for initial node in a haplotype                   
+  // accessor for initial node in a haplotype
   // old_node and edge-vectors are null; do not use to extend nonempty states
-  hDP_graph_accessor(xg::XG& graph, 
-                     xg::XG::ThreadMapping new_node,
+  hDP_graph_accessor(xg::XG& graph,
+                     ThreadMapping new_node,
                      haploMath::RRMemo& memo);
-                     
+
   int64_t new_side() const;
   int64_t new_height() const;
   int64_t old_height() const;
   int64_t new_length() const;
-  
+
   bool has_edge() const;
   bool inclusive_interval() const { return false; }
-  
+
   void print(ostream& output_stream) const;
 };
 
@@ -299,7 +311,7 @@ private:
 public:
 //------------------------------------------------------------------------------
 // API functions
-  static haplo_score_type score(const vg::Path& path, xg::XG& graph, haploMath::RRMemo& memo);
+//  static haplo_score_type score(const vg::Path& path, xg::XG& graph, haploMath::RRMemo& memo);
   template<class GBWTType>
   static haplo_score_type score(const vg::Path& path, GBWTType& graph, haploMath::RRMemo& memo);
 //------------------------------------------------------------------------------
@@ -308,7 +320,7 @@ public:
   template<class accessorType>
   haplo_DP(accessorType& ga);
   haplo_DP_column* get_current_column();
-  static haplo_score_type score(const thread_t& thread, xg::XG& graph, haploMath::RRMemo& memo);
+//  static haplo_score_type score(const thread_t& thread, xg::XG& graph, haploMath::RRMemo& memo);
   template<class GBWTType>
   static haplo_score_type score(const gbwt_thread_t& thread, GBWTType& graph, haploMath::RRMemo& memo);
 };
@@ -384,13 +396,13 @@ public:
 };
 
 /// Score haplotypes using the gPBWT haplotype data stored in an XG index
-class XGScoreProvider : public ScoreProvider {
-public:
-  XGScoreProvider(xg::XG& index);
-  pair<double, bool> score(const vg::Path&, haploMath::RRMemo& memo);
-private:
-  xg::XG& index;
-};
+//class XGScoreProvider : public ScoreProvider {
+//public:
+//  XGScoreProvider(xg::XG& index);
+//  pair<double, bool> score(const vg::Path&, haploMath::RRMemo& memo);
+//private:
+//  xg::XG& index;
+//};
 
 /// Score haplotypes using a GBWT haplotype database (normal or dynamic)
 template<class GBWTType>

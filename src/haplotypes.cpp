@@ -11,26 +11,26 @@ bool warn_on_score_fail = false;
 haplo_DP_edge_memo
 *******************************************************************************/
 
-haplo_DP_edge_memo::haplo_DP_edge_memo() : 
+haplo_DP_edge_memo::haplo_DP_edge_memo() :
   in(vector<vg::Edge>(0)), out(vector<vg::Edge>(0)) {
   
 }
 
-haplo_DP_edge_memo::haplo_DP_edge_memo(xg::XG& graph, 
-                                       xg::XG::ThreadMapping last_node,
-                                       xg::XG::ThreadMapping node) {
-  if(has_edge(graph, last_node, node)) {
-    out = last_node.is_reverse ? 
-         graph.edges_on_start(last_node.node_id) : 
-         graph.edges_on_end(last_node.node_id);
-    in = node.is_reverse ? 
-        graph.edges_on_end(node.node_id) :
-        graph.edges_on_start(node.node_id);
-  } else {
-    out = vector<vg::Edge>(0);
-    in = vector<vg::Edge>(0);
-  }
-}
+//haplo_DP_edge_memo::haplo_DP_edge_memo(xg::XG& graph,
+//                                       xg::XG::ThreadMapping last_node,
+//                                       xg::XG::ThreadMapping node) {
+//  if(has_edge(graph, last_node, node)) {
+//    out = last_node.is_reverse ?
+//         graph.edges_on_start(last_node.node_id) :
+//         graph.edges_on_end(last_node.node_id);
+//    in = node.is_reverse ?
+//        graph.edges_on_end(node.node_id) :
+//        graph.edges_on_start(node.node_id);
+//  } else {
+//    out = vector<vg::Edge>(0);
+//    in = vector<vg::Edge>(0);
+//  }
+//}
 
 const vector<vg::Edge>& haplo_DP_edge_memo::edges_in() const {
   return in;
@@ -43,70 +43,70 @@ const vector<vg::Edge>& haplo_DP_edge_memo::edges_out() const {
 bool haplo_DP_edge_memo::is_null() const {
   return out.size() == 0;
 }
-
-bool haplo_DP_edge_memo::has_edge(xg::XG& graph, xg::XG::ThreadMapping old_node, xg::XG::ThreadMapping new_node) {
-  vg::Edge edge_taken = xg::make_edge(old_node.node_id, old_node.is_reverse, new_node.node_id, new_node.is_reverse);
-
-  bool edge_found = false;
-
-  const vector<vg::Edge>& edges = old_node.is_reverse ? graph.edges_on_start(old_node.node_id) : 
-                                                   graph.edges_on_end(old_node.node_id);
-  
-  for(auto& edge : edges) {
-    // Look at every edge in order.
-    if(xg::edges_equivalent(edge, edge_taken)) {
-      // If we found the edge we're taking, break.
-      edge_found = true;
-      break;
-    }
-  }
-  return edge_found;  
-}
+//
+//bool haplo_DP_edge_memo::has_edge(xg::XG& graph, xg::XG::ThreadMapping old_node, xg::XG::ThreadMapping new_node) {
+//  vg::Edge edge_taken = xg::make_edge(old_node.node_id, old_node.is_reverse, new_node.node_id, new_node.is_reverse);
+//
+//  bool edge_found = false;
+//
+//  const vector<vg::Edge>& edges = old_node.is_reverse ? graph.edges_on_start(old_node.node_id) :
+//                                                   graph.edges_on_end(old_node.node_id);
+//
+//  for(auto& edge : edges) {
+//    // Look at every edge in order.
+//    if(xg::edges_equivalent(edge, edge_taken)) {
+//      // If we found the edge we're taking, break.
+//      edge_found = true;
+//      break;
+//    }
+//  }
+//  return edge_found;
+//}
 
 /*******************************************************************************
 hDP_graph_accessor
 *******************************************************************************/
-
-hDP_graph_accessor::hDP_graph_accessor(xg::XG& graph, 
-                                       xg::XG::ThreadMapping new_node, 
-                                       haploMath::RRMemo& memo) :
-  graph(graph), edges(haplo_DP_edge_memo()), 
-  old_node(xg::XG::ThreadMapping()), new_node(new_node), memo(memo) {
-    
-}
-
-hDP_graph_accessor::hDP_graph_accessor(xg::XG& graph, 
-                                       xg::XG::ThreadMapping old_node, 
-                                       xg::XG::ThreadMapping new_node, 
-                                       haploMath::RRMemo& memo) :
-  graph(graph), old_node(old_node), new_node(new_node), memo(memo),
-  edges(haplo_DP_edge_memo(graph, old_node, new_node)) {
-    
-}
-
-bool hDP_graph_accessor::has_edge() const {
-  return !edges.is_null();
-}
-
-int64_t hDP_graph_accessor::new_side() const {
-  return graph.id_to_rank(new_node.node_id) * 2 + new_node.is_reverse;
-}
-
-int64_t hDP_graph_accessor::new_height() const {
-  return graph.node_height(new_node);
-}
-
-int64_t hDP_graph_accessor::old_height() const {
-  return graph.node_height(old_node);
-}
-
-int64_t hDP_graph_accessor::new_length() const {
-  return graph.node_length(new_node.node_id);
-}
-
-void hDP_graph_accessor::print(ostream& output_stream) const {
-  output_stream << "From node: ID " << old_node.node_id << " is_reverse " << old_node.is_reverse << " ; To node: ID " << old_node.node_id << " is_reverse " << new_node.is_reverse << " ; Reference haplotypes visiting To Node: " << new_height() << endl;
-}
+//
+//hDP_graph_accessor::hDP_graph_accessor(xg::XG& graph,
+//                                       ThreadMapping new_node,
+//                                       haploMath::RRMemo& memo) :
+//  graph(graph), edges(haplo_DP_edge_memo()),
+//  old_node(ThreadMapping()), new_node(new_node), memo(memo) {
+//
+//}
+//
+//hDP_graph_accessor::hDP_graph_accessor(xg::XG& graph,
+//                                       ThreadMapping old_node,
+//                                       ThreadMapping new_node,
+//                                       haploMath::RRMemo& memo) :
+//  graph(graph), old_node(old_node), new_node(new_node), memo(memo),
+//  edges(haplo_DP_edge_memo(graph, old_node, new_node)) {
+//
+//}
+//
+//bool hDP_graph_accessor::has_edge() const {
+//  return !edges.is_null();
+//}
+//
+//int64_t hDP_graph_accessor::new_side() const {
+//  return graph.id_to_rank(new_node.node_id) * 2 + new_node.is_reverse;
+//}
+//
+//int64_t hDP_graph_accessor::new_height() const {
+//  return graph.node_height(new_node);
+//}
+//
+//int64_t hDP_graph_accessor::old_height() const {
+//  return graph.node_height(old_node);
+//}
+//
+//int64_t hDP_graph_accessor::new_length() const {
+//  return graph.node_length(new_node.node_id);
+//}
+//
+//void hDP_graph_accessor::print(ostream& output_stream) const {
+//  output_stream << "From node: ID " << old_node.node_id << " is_reverse " << old_node.is_reverse << " ; To node: ID " << old_node.node_id << " is_reverse " << new_node.is_reverse << " ; Reference haplotypes visiting To Node: " << new_height() << endl;
+//}
 
 /*******************************************************************************
 hDP_gbwt_graph_accessor
@@ -124,11 +124,11 @@ void gbwt_thread_t::push_back(gbwt::node_type node, size_t node_length) {
 }
 
 gbwt::vector_type::value_type& gbwt_thread_t::operator[](size_t i) {
-  return nodes[i];  
+  return nodes[i];
 }
 
 const gbwt::vector_type::value_type& gbwt_thread_t::operator[](size_t i) const {
-  return nodes[i];  
+  return nodes[i];
 }
 
 gbwt::vector_type::value_type& gbwt_thread_t::back() {
@@ -140,7 +140,7 @@ const gbwt::vector_type::value_type& gbwt_thread_t::back() const {
 }
 
 size_t gbwt_thread_t::nodelength(size_t i) const {
-  return node_lengths[i];  
+  return node_lengths[i];
 }
 
 size_t gbwt_thread_t::size() const {
@@ -171,31 +171,31 @@ haplo_DP_rectangle::haplo_DP_rectangle(bool inclusive_interval) : int_is_inc(inc
   
 }
 
-void haplo_DP_rectangle::extend(hDP_graph_accessor& ga) {
-  int64_t new_side = ga.new_side();
-  if(previous_index == -1) {
-    // We're extending an empty state
-    state.first = 0;
-    state.second = ga.new_height();
-  } else if(!ga.edges.is_null()) {
-    state.first = ga.graph.where_to(flat_node, 
-                                    state.first, 
-                                    new_side, 
-                                    ga.edges.edges_in(), 
-                                    ga.edges.edges_out());
-    state.second = ga.graph.where_to(flat_node, 
-                                    state.second, 
-                                    new_side, 
-                                    ga.edges.edges_in(), 
-                                    ga.edges.edges_out());
-  } else {
-    // gPBWT can't extend across an edge it doesn't know about; don't try
-    state.first = 0;
-    state.second = 0;
-  }
-  flat_node = new_side;
-  inner_value = -1;
-}
+//void haplo_DP_rectangle::extend(hDP_graph_accessor& ga) {
+//  int64_t new_side = ga.new_side();
+//  if(previous_index == -1) {
+//    // We're extending an empty state
+//    state.first = 0;
+//    state.second = ga.new_height();
+//  } else if(!ga.edges.is_null()) {
+//    state.first = ga.graph.where_to(flat_node,
+//                                    state.first,
+//                                    new_side,
+//                                    ga.edges.edges_in(),
+//                                    ga.edges.edges_out());
+//    state.second = ga.graph.where_to(flat_node,
+//                                    state.second,
+//                                    new_side,
+//                                    ga.edges.edges_in(),
+//                                    ga.edges.edges_out());
+//  } else {
+//    // gPBWT can't extend across an edge it doesn't know about; don't try
+//    state.first = 0;
+//    state.second = 0;
+//  }
+//  flat_node = new_side;
+//  inner_value = -1;
+//}
 
 void haplo_DP_rectangle::calculate_I(int64_t succ_o_val) {
   inner_value = interval_size() - succ_o_val;
@@ -274,13 +274,13 @@ void haplo_DP_column::update_inner_values() {
 //   } else if(ss_deltas.size() == 0) {
 //     int_itvl_t correction = prev - curr range start
 //     for(size_t i = indices.bottom + 1; i < indices.top; i++) {
-//       
+//
 //       rect.false_extend(ga, correction);
-//       
+//
 //     }
 //   } else {
 //     int64_t mid_index = indices.bottom + indices.size()/2;
-//     
+//
 //   }
 // }
 
@@ -303,8 +303,8 @@ void haplo_DP_column::update_score_vector(haploMath::RRMemo& memo) {
       continuing_counts.at(i - offset) = entries[i]->I();
     }
     
-    double logpS1S2RRS = previous_sum + 
-                         memo.log_recombination_penalty() + 
+    double logpS1S2RRS = previous_sum +
+                         memo.log_recombination_penalty() +
                          memo.logS(r_0->interval_size(), length);
     double logS1 = haploMath::int_weighted_sum(continuing_Rs, continuing_counts);
     double logS1RRD = logS1 + memo.logRRDiff(r_0->interval_size(), length);
@@ -374,42 +374,42 @@ bool haplo_DP_column::is_empty() const {
 /*******************************************************************************
 haplo_DP
 *******************************************************************************/
-haplo_score_type haplo_DP::score(const vg::Path& path, xg::XG& graph, haploMath::RRMemo& memo) {
-  return score(path_to_thread_t(path), graph, memo);
-}
-
-haplo_score_type haplo_DP::score(const thread_t& thread, xg::XG& graph, haploMath::RRMemo& memo) {
-  hDP_graph_accessor ga_i(graph, thread[0], memo);
-  haplo_DP hdp(ga_i);
-#ifdef debug
-  cerr << "After entry 0 (" << thread[0].node_id << ") height: " << ga_i.new_height() << " score: " << hdp.DP_column.current_sum() << endl;
-#endif
-  if(ga_i.new_height() == 0) {
-    if (warn_on_score_fail) {
-      cerr << "[WARNING] Initial node in path is visited by 0 reference haplotypes" << endl;
-      cerr << "Cannot compute a meaningful haplotype likelihood score" << endl;
-      ga_i.print(cerr);
-    }
-    return pair<double, bool>(nan(""), false);
-  }
-  for(size_t i = 1; i < thread.size(); i++) {
-    hDP_graph_accessor ga(graph, thread[i-1], thread[i], memo);
-    if(ga.new_height() == 0) {
-      if (warn_on_score_fail) {
-        cerr << "[WARNING] Node " << i + 1 << " in path is visited by 0 reference haplotypes" << endl;
-        cerr << "Cannot compute a meaningful haplotype likelihood score" << endl;
-        ga.print(cerr);
-      }
-      return pair<double, bool>(nan(""), false);
-    } else {
-      hdp.DP_column.extend(ga);
-    }
-#ifdef debug
-  cerr << "After entry " << i << " (" << thread[i].node_id << ") height: " << ga.new_height() << " score: " << hdp.DP_column.current_sum() << endl;
-#endif
-  }
-  return pair<double, bool>(hdp.DP_column.current_sum(), true);
-}
+//haplo_score_type haplo_DP::score(const vg::Path& path, xg::XG& graph, haploMath::RRMemo& memo) {
+//  return score(path_to_thread_t(path), graph, memo);
+//}
+//
+//haplo_score_type haplo_DP::score(const thread_t& thread, xg::XG& graph, haploMath::RRMemo& memo) {
+//  hDP_graph_accessor ga_i(graph, thread[0], memo);
+//  haplo_DP hdp(ga_i);
+//#ifdef debug
+//  cerr << "After entry 0 (" << thread[0].node_id << ") height: " << ga_i.new_height() << " score: " << hdp.DP_column.current_sum() << endl;
+//#endif
+//  if(ga_i.new_height() == 0) {
+//    if (warn_on_score_fail) {
+//      cerr << "[WARNING] Initial node in path is visited by 0 reference haplotypes" << endl;
+//      cerr << "Cannot compute a meaningful haplotype likelihood score" << endl;
+//      ga_i.print(cerr);
+//    }
+//    return pair<double, bool>(nan(""), false);
+//  }
+//  for(size_t i = 1; i < thread.size(); i++) {
+//    hDP_graph_accessor ga(graph, thread[i-1], thread[i], memo);
+//    if(ga.new_height() == 0) {
+//      if (warn_on_score_fail) {
+//        cerr << "[WARNING] Node " << i + 1 << " in path is visited by 0 reference haplotypes" << endl;
+//        cerr << "Cannot compute a meaningful haplotype likelihood score" << endl;
+//        ga.print(cerr);
+//      }
+//      return pair<double, bool>(nan(""), false);
+//    } else {
+//      hdp.DP_column.extend(ga);
+//    }
+//#ifdef debug
+//  cerr << "After entry " << i << " (" << thread[i].node_id << ") height: " << ga.new_height() << " score: " << hdp.DP_column.current_sum() << endl;
+//#endif
+//  }
+//  return pair<double, bool>(hdp.DP_column.current_sum(), true);
+//}
 
 haplo_DP_column* haplo_DP::get_current_column() {
   return &DP_column;
@@ -628,7 +628,7 @@ bool linear_haplo_structure::is_solitary_ref(int64_t node_id) const {
   return true;
 }
 
-bool linear_haplo_structure::is_snv(int64_t node_id) const {  
+bool linear_haplo_structure::is_snv(int64_t node_id) const {
   // has only one left and one right neighbour
   int64_t lnbr;
   int64_t rnbr;
@@ -667,7 +667,7 @@ bool linear_haplo_structure::is_snv(int64_t node_id) const {
     }
   }
     
-  // given guarantee that edge_sets contain no duplicates, check that there is an injective map 
+  // given guarantee that edge_sets contain no duplicates, check that there is an injective map
   // from r_of_lnbr to l_of_rnbr. If so, must be bijection as are finite sets of same size
   for(size_t i = 0; i < r_of_lnbr.size(); i++) {
     if(r_of_lnbr[i] == rnbr) {
@@ -722,7 +722,7 @@ inputHaplotype* linear_haplo_structure::path_to_input_haplotype(const vg::Path& 
   for(size_t i = 0; i < path.mapping_size(); i++) {
     vg::Mapping mapping = path.mapping(i);
     length += vg::mapping_from_length(mapping);
-  }  
+  }
   
   if(SNV_candidates.size() == 0) {
     // We need no sites, but one before-first site, after-last-site novel SNP
@@ -767,7 +767,7 @@ inputHaplotype* linear_haplo_structure::path_to_input_haplotype(const vg::Path& 
   }
   
   // With actual alleles, we need one novel SNP count between each pair of
-  // alleles, plus one before the first and one after the last. 
+  // alleles, plus one before the first and one after the last.
   inputHaplotype* to_return = new inputHaplotype(alleles, vector<size_t>(alleles.size() + 1, 0), index, start, length);
   return to_return;
 }
@@ -804,22 +804,22 @@ haplo_score_type linear_haplo_structure::score(const vg::Path& path) const {
     to_return = haplo_score_type(result, true);
   } else {
     to_return = haplo_score_type(nan(""), false);
-  }  
+  }
   delete observed;
   return(to_return);
 }
 
-/*******************************************************************************
-XGScoreProvider
-*******************************************************************************/
-
-XGScoreProvider::XGScoreProvider(xg::XG& index) : index(index) {
-  // Nothing to do!
-}
-
-pair<double, bool> XGScoreProvider::score(const vg::Path& path, haploMath::RRMemo& memo) {
-  return haplo_DP::score(path, index, memo);
-}
+///*******************************************************************************
+//XGScoreProvider
+//*******************************************************************************/
+//
+//XGScoreProvider::XGScoreProvider(xg::XG& index) : index(index) {
+//  // Nothing to do!
+//}
+//
+//pair<double, bool> XGScoreProvider::score(const vg::Path& path, haploMath::RRMemo& memo) {
+//  return haplo_DP::score(path, index, memo);
+//}
 
 /*******************************************************************************
 LinearScoreProvider
@@ -845,16 +845,16 @@ pair<double, bool> LinearScoreProvider::score(const vg::Path& path, haploMath::R
 path conversion
 *******************************************************************************/
 
-thread_t path_to_thread_t(const vg::Path& path) {
-  thread_t t;
-  for(size_t i = 0; i < path.mapping_size(); i++) {
-    vg::Mapping mapping = path.mapping(i);
-    auto pos = mapping.position();
-    xg::XG::ThreadMapping m = {pos.node_id(), pos.is_reverse()};
-    t.push_back(m);
-  }
-  return t;
-}
+//thread_t path_to_thread_t(const vg::Path& path) {
+//  thread_t t;
+//  for(size_t i = 0; i < path.mapping_size(); i++) {
+//    vg::Mapping mapping = path.mapping(i);
+//    auto pos = mapping.position();
+//    xg::XG::ThreadMapping m = {pos.node_id(), pos.is_reverse()};
+//    t.push_back(m);
+//  }
+//  return t;
+//}
 
 /*******************************************************************************
 math functions
@@ -862,7 +862,7 @@ math functions
 
 namespace haploMath {
 
-RRMemo::RRMemo(double recombination_penalty, size_t population_size) : 
+RRMemo::RRMemo(double recombination_penalty, size_t population_size) :
     population_size(population_size) {
   
   rho = -recombination_penalty - log(population_size - 1);

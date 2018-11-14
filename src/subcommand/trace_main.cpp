@@ -12,7 +12,7 @@ using namespace vg;
 using namespace std;
 using namespace vg::subcommand;
 
-using thread_t = vector<xg::XG::ThreadMapping>;
+//using thread_t = vector<xg::XG::ThreadMapping>;
 
 void help_trace(char** argv) {
     cerr << "usage: " << argv[0] << " trace [options]" << endl

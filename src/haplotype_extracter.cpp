@@ -14,10 +14,11 @@ void trace_haplotypes_and_paths(xg::XG& index, const gbwt::GBWT* haplotype_datab
                                 map<string, int>& out_thread_frequencies,
                                 bool expand_graph) {
   // get our haplotypes
-  xg::XG::ThreadMapping n = {start_node, false};
-  vector<pair<thread_t,int> > haplotypes = haplotype_database ?
-    list_haplotypes(index, *haplotype_database, n, extend_distance) :
-    list_haplotypes(index, n, extend_distance);
+  ThreadMapping n = {start_node, false};
+//  vector<pair<thread_t,int> > haplotypes = haplotype_database ?
+//    list_haplotypes(index, *haplotype_database, n, extend_distance) :
+//    list_haplotypes(index, n, extend_distance);
+    vector<pair<thread_t,int> > haplotypes = list_haplotypes(index, *haplotype_database, n, extend_distance);
 
 #ifdef debug
   cerr << "Haplotype database " << haplotype_database << " produced " << haplotypes.size() << " haplotypes" << endl;
@@ -154,67 +155,67 @@ Path path_from_thread_t(thread_t& t, xg::XG& index) {
     return toReturn;
 }
 
-vector<pair<thread_t,int> > list_haplotypes(xg::XG& index,
-            xg::XG::ThreadMapping start_node, int extend_distance) {
-  vector<pair<thread_t,xg::XG::ThreadSearchState> > search_intermediates;
-  vector<pair<thread_t,int> > search_results;
-  thread_t first_thread = {start_node};
-  xg::XG::ThreadSearchState first_state;
-  index.extend_search(first_state,first_thread);
-  vector<Edge> edges = start_node.is_reverse ?
-            index.edges_on_start(start_node.node_id) :
-            index.edges_on_end(start_node.node_id);
-  for(int i = 0; i < edges.size(); i++) {
-    xg::XG::ThreadMapping next_node;
-    next_node.node_id = edges[i].to();
-    next_node.is_reverse = edges[i].to_end();
-    xg::XG::ThreadSearchState new_state = first_state;
-    thread_t t = {next_node};
-    index.extend_search(new_state, t);
-    thread_t new_thread = first_thread;
-    new_thread.push_back(next_node);
-    if(!new_state.is_empty()) {
-      search_intermediates.push_back(make_pair(new_thread,new_state));
-    }
-  }
-  while(search_intermediates.size() > 0) {
-    pair<thread_t,xg::XG::ThreadSearchState> last = search_intermediates.back();
-    search_intermediates.pop_back();
-    int check_size = search_intermediates.size();
-    vector<Edge> edges = last.first.back().is_reverse ?
-              index.edges_on_start(last.first.back().node_id) :
-              index.edges_on_end(last.first.back().node_id);
-    if(edges.size() == 0) {
-      search_results.push_back(make_pair(last.first,last.second.count()));
-    } else {
-      for(int i = 0; i < edges.size(); i++) {
-        xg::XG::ThreadMapping next_node;
-        next_node.node_id = edges[i].to();
-        next_node.is_reverse = edges[i].to_end();
-        xg::XG::ThreadSearchState new_state = last.second;
-        thread_t next_thread = {next_node};
-        index.extend_search(new_state,next_thread);
-        thread_t new_thread = last.first;
-        new_thread.push_back(next_node);
-        if(!new_state.is_empty()) {
-          if(new_thread.size() >= extend_distance) {
-            search_results.push_back(make_pair(new_thread,new_state.count()));
-          } else {
-            search_intermediates.push_back(make_pair(new_thread,new_state));
-          }
-        }
-      }
-      if(check_size == search_intermediates.size() &&
-                last.first.size() < extend_distance - 1) {
-        search_results.push_back(make_pair(last.first,last.second.count()));
-      }
-    }
-  }
-  return search_results;
-}
+//vector<pair<thread_t,int> > list_haplotypes(xg::XG& index,
+//            xg::XG::ThreadMapping start_node, int extend_distance) {
+//  vector<pair<thread_t,xg::XG::ThreadSearchState> > search_intermediates;
+//  vector<pair<thread_t,int> > search_results;
+//  thread_t first_thread = {start_node};
+//  xg::XG::ThreadSearchState first_state;
+//  index.extend_search(first_state,first_thread);
+//  vector<Edge> edges = start_node.is_reverse ?
+//            index.edges_on_start(start_node.node_id) :
+//            index.edges_on_end(start_node.node_id);
+//  for(int i = 0; i < edges.size(); i++) {
+//    xg::XG::ThreadMapping next_node;
+//    next_node.node_id = edges[i].to();
+//    next_node.is_reverse = edges[i].to_end();
+//    xg::XG::ThreadSearchState new_state = first_state;
+//    thread_t t = {next_node};
+//    index.extend_search(new_state, t);
+//    thread_t new_thread = first_thread;
+//    new_thread.push_back(next_node);
+//    if(!new_state.is_empty()) {
+//      search_intermediates.push_back(make_pair(new_thread,new_state));
+//    }
+//  }
+//  while(search_intermediates.size() > 0) {
+//    pair<thread_t,xg::XG::ThreadSearchState> last = search_intermediates.back();
+//    search_intermediates.pop_back();
+//    int check_size = search_intermediates.size();
+//    vector<Edge> edges = last.first.back().is_reverse ?
+//              index.edges_on_start(last.first.back().node_id) :
+//              index.edges_on_end(last.first.back().node_id);
+//    if(edges.size() == 0) {
+//      search_results.push_back(make_pair(last.first,last.second.count()));
+//    } else {
+//      for(int i = 0; i < edges.size(); i++) {
+//        xg::XG::ThreadMapping next_node;
+//        next_node.node_id = edges[i].to();
+//        next_node.is_reverse = edges[i].to_end();
+//        xg::XG::ThreadSearchState new_state = last.second;
+//        thread_t next_thread = {next_node};
+//        index.extend_search(new_state,next_thread);
+//        thread_t new_thread = last.first;
+//        new_thread.push_back(next_node);
+//        if(!new_state.is_empty()) {
+//          if(new_thread.size() >= extend_distance) {
+//            search_results.push_back(make_pair(new_thread,new_state.count()));
+//          } else {
+//            search_intermediates.push_back(make_pair(new_thread,new_state));
+//          }
+//        }
+//      }
+//      if(check_size == search_intermediates.size() &&
+//                last.first.size() < extend_distance - 1) {
+//        search_results.push_back(make_pair(last.first,last.second.count()));
+//      }
+//    }
+//  }
+//  return search_results;
+//}
 
 vector<pair<thread_t,int> > list_haplotypes(xg::XG& index, const gbwt::GBWT& haplotype_database,
-            xg::XG::ThreadMapping start_node, int extend_distance) {
+            ThreadMapping start_node, int extend_distance) {
 
 #ifdef debug
   cerr << "Extracting haplotypes from GBWT" << endl;
@@ -235,7 +236,7 @@ vector<pair<thread_t,int> > list_haplotypes(xg::XG& index, const gbwt::GBWT& hap
 
   // TODO: this is just most of the loop body repeated!
   for(int i = 0; i < edges.size(); i++) {
-    xg::XG::ThreadMapping next_node;
+    ThreadMapping next_node;
     next_node.node_id = edges[i].to();
     next_node.is_reverse = edges[i].to_end();
     auto extend_node = gbwt::Node::encode(next_node.node_id, next_node.is_reverse);
@@ -266,7 +267,7 @@ vector<pair<thread_t,int> > list_haplotypes(xg::XG& index, const gbwt::GBWT& hap
       search_results.push_back(make_pair(last.first,last.second.size()));
     } else {
       for(int i = 0; i < edges.size(); i++) {
-        xg::XG::ThreadMapping next_node;
+        ThreadMapping next_node;
         next_node.node_id = edges[i].to();
         next_node.is_reverse = edges[i].to_end();
         auto extend_node = gbwt::Node::encode(next_node.node_id, next_node.is_reverse);

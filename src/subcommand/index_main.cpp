@@ -83,10 +83,10 @@ void help_index(char** argv) {
 }
 
 // Convert gbwt::node_type to ThreadMapping.
-xg::XG::ThreadMapping gbwt_to_thread_mapping(gbwt::node_type node) {
-    xg::XG::ThreadMapping thread_mapping = { (int64_t)(gbwt::Node::id(node)), gbwt::Node::is_reverse(node) };
-    return thread_mapping;
-}
+//xg::XG::ThreadMapping gbwt_to_thread_mapping(gbwt::node_type node) {
+//    xg::XG::ThreadMapping thread_mapping = { (int64_t)(gbwt::Node::id(node)), gbwt::Node::is_reverse(node) };
+//    return thread_mapping;
+//}
 
 // Convert Path to a GBWT path.
 gbwt::vector_type path_to_gbwt(const Path& path) {
@@ -535,7 +535,7 @@ int main_index(int argc, char** argv) {
         }
 
         vector<string> thread_names;                // Store thread names in insertion order.
-        vector<xg::XG::thread_t> all_phase_threads; // Store all threads if building gPBWT.
+//        vector<xg::XG::thread_t> all_phase_threads; // Store all threads if building gPBWT.
         size_t haplotype_count = 0;
 
         // Do we build GBWT?
@@ -564,12 +564,12 @@ int main_index(int argc, char** argv) {
                 for (auto node : to_save) { binary_file.push_back(node); }
                 binary_file.push_back(gbwt::ENDMARKER);
             }
-            if (build_gpbwt) {
-                xg::XG::thread_t temp;
-                temp.reserve(to_save.size());
-                for (auto node : to_save) { temp.push_back(gbwt_to_thread_mapping(node)); }
-                all_phase_threads.push_back(temp);
-            }
+//            if (build_gpbwt) {
+//                xg::XG::thread_t temp;
+//                temp.reserve(to_save.size());
+//                for (auto node : to_save) { temp.push_back(gbwt_to_thread_mapping(node)); }
+//                all_phase_threads.push_back(temp);
+//            }
             thread_names.push_back(thread_name);
         };
 
@@ -865,13 +865,13 @@ int main_index(int argc, char** argv) {
                     xg_index->set_haplotype_count(haplotype_count);
                 }
             }
-            if (build_gpbwt) {
-                if (show_progress) {
-                    cerr << "Inserting all phase threads into DAG..." << endl;
-                }
-                xg_index->insert_threads_into_dag(all_phase_threads, thread_names);
-                xg_index->set_haplotype_count(haplotype_count);
-            }
+//            if (build_gpbwt) {
+//                if (show_progress) {
+//                    cerr << "Inserting all phase threads into DAG..." << endl;
+//                }
+//                xg_index->insert_threads_into_dag(all_phase_threads, thread_names);
+//                xg_index->set_haplotype_count(haplotype_count);
+//            }
         }
     } // End of thread indexing.
 

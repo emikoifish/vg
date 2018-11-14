@@ -639,73 +639,73 @@ int main_find(int argc, char** argv) {
             vgg.remove_orphan_edges();
             vgg.serialize_to_ostream(cout);
         }
-        if(!haplotype_alignments.empty()) {
-            // What should we do with each alignment?
-            function<void(Alignment&)> lambda = [&xindex](Alignment& aln) {
-                // Count the amtches to the path. The path might be empty, in
-                // which case it will yield the biggest size_t you can have.
-                size_t matches = xindex.count_matches(aln.path());
-
-                // We do this single-threaded, at least for now, so we don't
-                // need to worry about coordinating output, and we can just
-                // spit out the counts as bare numbers.
-                cout << matches << endl;
-            };
-            if (haplotype_alignments == "-") {
-                stream::for_each(std::cin, lambda);
-            } else {
-                ifstream in;
-                in.open(haplotype_alignments.c_str());
-                if(!in.is_open()) {
-                    cerr << "[vg find] error: could not open alignments file " << haplotype_alignments << endl;
-                    exit(1);
-                }
-                stream::for_each(in, lambda);
-            }
-
-        }
-        if (extract_threads) {
-            bool extract_reverse = false;
-            map<string, list<xg::XG::thread_t> > threads;
-            if (extract_thread_patterns.empty()) {
-                threads = xindex.extract_threads(extract_reverse);
-            } else {
-                for (auto& pattern : extract_thread_patterns) {
-                    for (auto& t : xindex.extract_threads_matching(pattern, extract_reverse)) {
-                        threads[t.first] = t.second;
-                    }
-                }
-            }
-            for(auto t : threads) {
-                // Convert to a Path
-                auto& thread = *t.second.begin();
-                auto& thread_name = t.first;
-                Path path;
-                for(xg::XG::ThreadMapping& m : thread) {
-                    // Convert all the mappings
-                    Mapping mapping;
-                    mapping.mutable_position()->set_node_id(m.node_id);
-                    mapping.mutable_position()->set_is_reverse(m.is_reverse);
-                    Edit* e = mapping.add_edit();
-                    size_t l = xindex.node_length(m.node_id);
-                    e->set_from_length(l);
-                    e->set_to_length(l);
-                    *(path.add_mapping()) = mapping;
-                }
-
-                // Get each thread's name
-                path.set_name(thread_name);
-
-                // We need a Graph for serialization purposes. We do one chunk per
-                // thread in case the threads are long.
-                Graph g;
-                *(g.add_path()) = path;
-
-                // Dump the graph with its mappings. TODO: can we restrict these to
-                vector<Graph> gb = { g };
-                stream::write_buffered(cout, gb, 0);
-            }
-        }
+//        if(!haplotype_alignments.empty()) {
+//            // What should we do with each alignment?
+//            function<void(Alignment&)> lambda = [&xindex](Alignment& aln) {
+//                // Count the matches to the path. The path might be empty, in
+//                // which case it will yield the biggest size_t you can have.
+//                size_t matches = xindex.count_matches(aln.path());
+//
+//                // We do this single-threaded, at least for now, so we don't
+//                // need to worry about coordinating output, and we can just
+//                // spit out the counts as bare numbers.
+//                cout << matches << endl;
+//            };
+//            if (haplotype_alignments == "-") {
+//                stream::for_each(std::cin, lambda);
+//            } else {
+//                ifstream in;
+//                in.open(haplotype_alignments.c_str());
+//                if(!in.is_open()) {
+//                    cerr << "[vg find] error: could not open alignments file " << haplotype_alignments << endl;
+//                    exit(1);
+//                }
+//                stream::for_each(in, lambda);
+//            }
+//
+//        }
+//        if (extract_threads) {
+//            bool extract_reverse = false;
+//            map<string, list<xg::XG::thread_t> > threads;
+//            if (extract_thread_patterns.empty()) {
+//                threads = xindex.extract_threads(extract_reverse);
+//            } else {
+//                for (auto& pattern : extract_thread_patterns) {
+//                    for (auto& t : xindex.extract_threads_matching(pattern, extract_reverse)) {
+//                        threads[t.first] = t.second;
+//                    }
+//                }
+//            }
+//            for(auto t : threads) {
+//                // Convert to a Path
+//                auto& thread = *t.second.begin();
+//                auto& thread_name = t.first;
+//                Path path;
+//                for(xg::XG::ThreadMapping& m : thread) {
+//                    // Convert all the mappings
+//                    Mapping mapping;
+//                    mapping.mutable_position()->set_node_id(m.node_id);
+//                    mapping.mutable_position()->set_is_reverse(m.is_reverse);
+//                    Edit* e = mapping.add_edit();
+//                    size_t l = xindex.node_length(m.node_id);
+//                    e->set_from_length(l);
+//                    e->set_to_length(l);
+//                    *(path.add_mapping()) = mapping;
+//                }
+//
+//                // Get each thread's name
+//                path.set_name(thread_name);
+//
+//                // We need a Graph for serialization purposes. We do one chunk per
+//                // thread in case the threads are long.
+//                Graph g;
+//                *(g.add_path()) = path;
+//
+//                // Dump the graph with its mappings. TODO: can we restrict these to
+//                vector<Graph> gb = { g };
+//                stream::write_buffered(cout, gb, 0);
+//            }
+//        }
         if (extract_paths) {
             vector<Path> paths;
             for (auto& pattern : extract_path_patterns) {
