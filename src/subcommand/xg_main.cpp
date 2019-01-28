@@ -47,7 +47,7 @@ void help_xg(char** argv) {
          << "    -S, --edges-on-start ID    list all edges on start of node with ID" << endl
          << "    -E, --edges-on-end ID      list all edges on end of node with ID" << endl
          << "    -p, --path TARGET          gets the region of the graph @ TARGET (chr:start-end)" << endl
-         << "    -x, --extract-threads      extract succinct threads as paths" << endl
+         //<< "    -x, --extract-threads      extract succinct threads as paths" << endl
          << "    -r, --store-threads        store perfect match paths as succinct threads" << endl
          << "    -d, --is-sorted-dag        graph is a sorted dag; use fast thread insert" << endl
          << "    -R, --report FILE          save an HTML space usage report to FILE when serializing" << endl
@@ -82,7 +82,7 @@ int main_xg(int argc, char** argv) {
     bool print_graph = false;
     bool text_output = false;
     bool validate_graph = false;
-    bool extract_threads = false;
+//    bool extract_threads = false;
     bool store_threads = false;
     bool is_sorted_dag = false;
     string report_name;
@@ -110,7 +110,7 @@ int main_xg(int argc, char** argv) {
                 {"edges-on-end", required_argument, 0, 'E'},
                 {"node-seq", required_argument, 0, 's'},
                 {"path", required_argument, 0, 'p'},
-                {"extract-threads", no_argument, 0, 'x'},
+                //{"extract-threads", no_argument, 0, 'x'},
                 {"store-threads", no_argument, 0, 'r'},
                 {"is-sorted-dag", no_argument, 0, 'd'},
                 {"report", required_argument, 0, 'R'},
@@ -152,9 +152,9 @@ int main_xg(int argc, char** argv) {
             text_output = true;
             break;
             
-        case 'x':
-            extract_threads = true;
-            break;
+//        case 'x':
+//            extract_threads = true;
+//            break;
             
         case 'r':
             store_threads = true;

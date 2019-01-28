@@ -7,7 +7,7 @@ PATH=../bin:$PATH # for vg
 
 export LC_ALL="en_US.utf8" # force ekg's favorite sort order 
 
-plan tests 59
+plan tests 53
 
 # Single graph without haplotypes
 vg construct -r small/x.fa -v small/x.vcf.gz > x.vg
@@ -199,27 +199,27 @@ is "$(md5sum <x1337.sorted.gam.gai)" "$(md5sum <x1337.sorted.gam.gai2)" "vg inde
 
 rm -rf x.idx x.vg.map x.vg.aln x1337.gam x1337.sorted.gam.gai2 x1337.sorted.gam.gai x1337.sorted.gam
 
-vg construct -r small/x.fa -v small/x.vcf.gz -a >x.vg
-vg index -x x.xg -v small/x.vcf.gz x.vg
-is $? 0 "building an xg index containing a gPBWT"
+# vg construct -r small/x.fa -v small/x.vcf.gz -a >x.vg
+# vg index -x x.xg -v small/x.vcf.gz x.vg
+# is $? 0 "building an xg index containing a gPBWT"
+# 
+# vg find -t -x x.xg >part.vg
+# is "$(cat x.vg part.vg | vg view -j - | jq '.path[].name' | grep '_thread' | wc -l)" 2 "the gPBWT can be queried for two threads for each haplotype"
+# 
+# is $(vg find -x x.xg -q _thread_1_x_0 | vg paths -L -v - | wc -l) 1 "a specific thread may be pulled from the graph by name"
+# 
+# vg index -x x.xg -v small/x.vcf.gz x.vg --exclude 1
+# vg find -t -x x.xg >part.vg
+# is "$(cat x.vg part.vg | vg view -j - | jq '.path[].name' | grep '_thread' | wc -l)" 0 "samples can be excluded from haplotype indexing"
+# 
+# rm -f x.vg x.xg part.vg x.gcsa
 
-vg find -t -x x.xg >part.vg
-is "$(cat x.vg part.vg | vg view -j - | jq '.path[].name' | grep '_thread' | wc -l)" 2 "the gPBWT can be queried for two threads for each haplotype"
 
-is $(vg find -x x.xg -q _thread_1_x_0 | vg paths -L -v - | wc -l) 1 "a specific thread may be pulled from the graph by name"
-
-vg index -x x.xg -v small/x.vcf.gz x.vg --exclude 1
-vg find -t -x x.xg >part.vg
-is "$(cat x.vg part.vg | vg view -j - | jq '.path[].name' | grep '_thread' | wc -l)" 0 "samples can be excluded from haplotype indexing"
-
-rm -f x.vg x.xg part.vg x.gcsa
-
-
-vg construct -r small/xy.fa -v small/xy.vcf.gz -a >xy.vg
-vg index -x xy.xg -v small/xy.vcf.gz xy.vg
-is $(vg find -x xy.xg -t | vg paths -L -v - | wc -l) 4 "a thread is stored per haplotype, sample, and reference sequence"
-is $(vg find -x xy.xg -q _thread_1_y | vg paths -L -v - | wc -l) 2 "we have the expected number of threads per chromosome"
-rm -f xy.vg xy.xg
+# vg construct -r small/xy.fa -v small/xy.vcf.gz -a >xy.vg
+# vg index -x xy.xg -v small/xy.vcf.gz xy.vg
+# is $(vg find -x xy.xg -t | vg paths -L -v - | wc -l) 4 "a thread is stored per haplotype, sample, and reference sequence"
+# is $(vg find -x xy.xg -q _thread_1_y | vg paths -L -v - | wc -l) 2 "we have the expected number of threads per chromosome"
+# rm -f xy.vg xy.xg
 
 vg construct -r small/x.fa -v small/x.vcf.gz -a >x.vg
 vg index -x x.xg -v small/x.vcf.gz -H haps.bin x.vg

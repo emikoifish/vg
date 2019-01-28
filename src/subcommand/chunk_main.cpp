@@ -301,6 +301,10 @@ int main_chunk(int argc, char** argv) {
         // And load it
         gbwt_index->load(in);
     }
+    if (trace && gbwt_file.empty()) {
+        cerr << "error:[vg chunk] gbwt file is empty, haplotype database is required"<< endl;
+        return 1;
+    }
 
     
     // We need an index on the GAM to chunk it
@@ -522,6 +526,7 @@ int main_chunk(int argc, char** argv) {
 
         // optionally trace our haplotypes
         if (trace && subgraph) {
+            cerr << "hi" << endl;
             int64_t trace_start;
             int64_t trace_end;
             if (id_range) {
@@ -533,13 +538,17 @@ int main_chunk(int argc, char** argv) {
                 trace_end = xindex.node_at_path_position(output_regions[i].seq,
                                                          output_regions[i].end);
             }
+            cerr << "okay1" << endl;
             int64_t trace_steps = trace_end - trace_start;
             Graph g;
             trace_haplotypes_and_paths(xindex, gbwt_index.get(), trace_start, trace_steps,
                                        g, trace_thread_frequencies, false);
+            cerr << "okay2" << endl;
             subgraph->paths.for_each([&trace_thread_frequencies](const Path& path) {
-                    trace_thread_frequencies[path.name()] = 1;});            
+                    trace_thread_frequencies[path.name()] = 1;});
+            cerr << "okay3" << endl;
             subgraph->extend(g);
+            cerr << "bye" << endl;
         }
 
         ofstream out_file;

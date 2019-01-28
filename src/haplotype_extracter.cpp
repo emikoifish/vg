@@ -4,6 +4,7 @@
 #include "json2pb.h"
 #include "xg.hpp"
 
+//#define debug
 namespace vg {
 
 using namespace std;
