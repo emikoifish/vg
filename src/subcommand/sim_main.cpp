@@ -16,11 +16,37 @@
 #include "../vg.hpp"
 #include "../mapper.hpp"
 #include "../sampler.hpp"
-#include "../stream.hpp"
+#include "../stream/protobuf_emitter.hpp"
+#include "../stream/vpkg.hpp"
 
 using namespace std;
 using namespace vg;
 using namespace vg::subcommand;
+
+// Gets the transcript IDs and TPM values from an RSEM output .tsv file
+vector<pair<string, double>> parse_rsem_expression_file(istream& rsem_in) {
+    vector<pair<string, double>> return_val;
+    string line;
+    // skip the header line
+    getline(rsem_in, line);
+    line.clear();
+    while (getline(rsem_in, line)) {
+        vector<string> tokens;
+        stringstream strm(line);
+        string token;
+        while (getline(strm, token, '\t')) {
+            tokens.push_back(move(token));
+            token.clear();
+        }
+        if (tokens.size() != 8) {
+            cerr << "[vg sim] error: Cannot parse transcription file. Expected 8-column TSV file as produced by RSEM, got " << tokens.size() << " columns." << endl;
+            exit(1);
+        }
+        return_val.emplace_back(tokens[0], parse<double>(tokens[5]));
+        line.clear();
+    }
+    return return_val;
+}
 
 void help_sim(char** argv) {
     cerr << "usage: " << argv[0] << " sim [options]" << endl
@@ -30,7 +56,8 @@ void help_sim(char** argv) {
          << "    -x, --xg-name FILE          use the xg index in FILE" << endl
          << "    -F, --fastq FILE            superpose errors matching the error profile of NGS reads in FILE (ignores -l,-f)" << endl
          << "    -I, --interleaved           reads in FASTQ (-F) are interleaved read pairs" << endl
-         << "    -P, --path PATH             simulate from the given names path (multiple allowed)" << endl
+         << "    -P, --path PATH             simulate from the given names path (multiple allowed, cannot also give -T)" << endl
+         << "    -T, --tx-expr-file FILE     simulate from an expression profile formatted as RSEM output (cannot also give -P)" << endl
          << "    -l, --read-length N         write reads of length N" << endl
          << "    -n, --num-reads N           simulate N reads or read pairs" << endl
          << "    -s, --random-seed N         use this specific seed for the PRNG" << endl
@@ -72,6 +99,9 @@ int main_sim(int argc, char** argv) {
     string fastq_name;
     // What path should we sample from? Empty string = the whole graph.
     vector<string> path_names;
+    // Alternatively, which transcripts with how much expression?
+    string rsem_file_name;
+    vector<pair<string, double>> transcript_expressions;
 
     int c;
     optind = 2; // force optind past command positional argument
@@ -83,6 +113,7 @@ int main_sim(int argc, char** argv) {
             {"fastq", required_argument, 0, 'F'},
             {"interleaved", no_argument, 0, 'I'},
             {"path", required_argument, 0, 'P'},
+            {"tx-expr-file", required_argument, 0, 'T'},
             {"read-length", required_argument, 0, 'l'},
             {"num-reads", required_argument, 0, 'n'},
             {"random-seed", required_argument, 0, 's'},
@@ -100,7 +131,7 @@ int main_sim(int argc, char** argv) {
         };
 
         int option_index = 0;
-        c = getopt_long (argc, argv, "hl:n:s:e:i:fax:Jp:v:Nd:F:P:S:I",
+        c = getopt_long (argc, argv, "hl:n:s:e:i:fax:Jp:v:Nd:F:P:T:S:I",
                 long_options, &option_index);
 
         // Detect the end of the options.
@@ -124,6 +155,10 @@ int main_sim(int argc, char** argv) {
             
         case 'P':
             path_names.push_back(optarg);
+            break;
+            
+        case 'T':
+            rsem_file_name = optarg;
             break;
 
         case 'l':
@@ -199,26 +234,43 @@ int main_sim(int argc, char** argv) {
         cerr << "[vg sim] error: we need an xg index to sample reads from" << endl;
         return 1;
     }
-
-    xg::XG* xgidx = nullptr;
-    ifstream xg_stream(xg_name);
-    if(xg_stream) {
-        xgidx = new xg::XG(xg_stream);
+    
+    if (!rsem_file_name.empty()) {
+        ifstream rsem_in(rsem_file_name);
+        if (!rsem_in) {
+            cerr << "[vg sim] error: could not open transcription profile file " << rsem_file_name << endl;
+            return 1;
+        }
+        transcript_expressions = parse_rsem_expression_file(rsem_in);
     }
-    if (!xg_stream || xgidx == nullptr) {
-        cerr << "[vg sim] error: could not open xg index" << endl;
-        return 1;
-    }
 
+    unique_ptr<xg::XG> xgidx;
+    if (!xg_name.empty()) {
+        xgidx = stream::VPKG::load_one<xg::XG>(xg_name);
+    }
+    
     for (auto& path_name : path_names) {
         if (xgidx->path_rank(path_name) == 0) {
             cerr << "[vg sim] error: path \""<< path_name << "\" not found in index" << endl;
             return 1;
         }
     }
+    
+    for (auto& transcript_expression : transcript_expressions) {
+        if (xgidx->path_rank(transcript_expression.first) == 0) {
+            cerr << "[vg sim] error: transcript path for \""<< transcript_expression.first << "\" not found in index" << endl;
+            return 1;
+        }
+    }
+    
+    unique_ptr<stream::ProtobufEmitter<Alignment>> aln_emitter;
+    if (align_out && !json_out) {
+        // Make an emitter to emit Alignments
+        aln_emitter = unique_ptr<stream::ProtobufEmitter<Alignment>>(new stream::ProtobufEmitter<Alignment>(cout));
+    }
 
     // Make a Mapper to score reads, with the default parameters
-    Mapper rescorer(xgidx, nullptr, nullptr);
+    Mapper rescorer(xgidx.get(), nullptr, nullptr);
     // We define a function to score a generated alignment under the mapper
     auto rescore = [&] (Alignment& aln) {
         // Score using exact distance.
@@ -229,10 +281,10 @@ int main_sim(int argc, char** argv) {
         // Use the fixed error rate sampler
         
         // Make a sample to sample reads with
-        Sampler sampler(xgidx, seed_val, forward_only, reads_may_contain_Ns, path_names);
+        Sampler sampler(xgidx.get(), seed_val, forward_only, reads_may_contain_Ns, path_names, transcript_expressions);
         
         // Make a Mapper to score reads, with the default parameters
-        Mapper rescorer(xgidx, nullptr, nullptr);
+        Mapper rescorer(xgidx.get(), nullptr, nullptr);
         // Override the "default" full length bonus, just like every other subcommand that uses a mapper ends up doing.
         // TODO: is it safe to change the default?
         rescorer.set_alignment_scores(default_match, default_mismatch, default_gap_open, default_gap_extension, default_full_length_bonus);
@@ -275,8 +327,8 @@ int main_sim(int argc, char** argv) {
                         cout << pb2json(alns.front()) << endl;
                         cout << pb2json(alns.back()) << endl;
                     } else {
-                        function<Alignment(size_t)> lambda = [&alns](size_t n) { return alns[n]; };
-                        stream::write(cout, 2, lambda);
+                        aln_emitter->write_copy(alns.front());
+                        aln_emitter->write_copy(alns.back());
                     }
                 } else {
                     cout << alns.front().sequence() << "\t" << alns.back().sequence() << endl;
@@ -308,8 +360,7 @@ int main_sim(int argc, char** argv) {
                     if (json_out) {
                         cout << pb2json(aln) << endl;
                     } else {
-                        function<Alignment(size_t)> lambda = [&aln](size_t n) { return aln; };
-                        stream::write(cout, 1, lambda);
+                        aln_emitter->write_copy(aln);
                     }
                 } else {
                     cout << aln.sequence() << endl;
@@ -327,6 +378,7 @@ int main_sim(int argc, char** argv) {
                              fastq_name,
                              interleaved,
                              path_names,
+                             transcript_expressions,
                              base_error,
                              indel_error,
                              indel_prop,
@@ -348,10 +400,8 @@ int main_sim(int argc, char** argv) {
                         cout << pb2json(read_pair.second) << endl;
                     }
                     else {
-                        function<Alignment(size_t)> lambda = [&read_pair](size_t n) {
-                            return n % 2 == 0 ? read_pair.first : read_pair.second;
-                        };
-                        stream::write(cout, 2, lambda);
+                        aln_emitter->write_copy(read_pair.first);
+                        aln_emitter->write_copy(read_pair.second);
                     }
                 }
                 else {
@@ -369,10 +419,7 @@ int main_sim(int argc, char** argv) {
                         cout << pb2json(read) << endl;
                     }
                     else {
-                        function<Alignment(size_t)> lambda = [&read](size_t n) {
-                            return read;
-                        };
-                        stream::write(cout, 1, lambda);
+                        aln_emitter->write_copy(read);
                     }
                 }
                 else {
@@ -382,11 +429,6 @@ int main_sim(int argc, char** argv) {
         }
     }
     
-    if (align_out && !json_out) {
-        // We wrote alignment data, so write an EOF
-        stream::finish(cout);
-    }
-
     return 0;
 }
 

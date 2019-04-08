@@ -5,7 +5,7 @@
 #include <gcsa/lcp.h>
 #include <structures/union_find.hpp>
 #include "position.hpp"
-#include "gssw_aligner.hpp"
+#include "aligner.hpp"
 #include "utility.hpp"
 #include "mem.hpp"
 #include "xg.hpp"
@@ -170,12 +170,31 @@ public:
     /// contains a pointer to the original MEM and the position of that particular hit in the graph.
     vector<cluster_t> clusters(const Alignment& alignment,
                                const vector<MaximalExactMatch>& mems,
-                               BaseAligner* Aligner,
+                               const GSSWAligner* Aligner,
                                size_t min_mem_length = 1,
                                int32_t max_qual_score = 60,
                                int32_t log_likelihood_approx_factor = 0,
                                size_t min_median_mem_coverage_for_split = 0,
                                double suboptimal_edge_pruning_factor = .75);
+    
+    /**
+     * Given two vectors of clusters, an xg index, and bounds on the distance between clusters,
+     * returns a vector of pairs of cluster numbers (one in each vector) matched with the estimated
+     * distance.
+     *
+     * Clusters are assumed to be located at the position of the first MEM hit they contain. Optionally,
+     * additional MEMs may be identied as possible anchors for the cluster. Additional anchors are
+     * provided as pairs of (cluster index, MEM index within cluster). Only one result will be returned
+     * per pair of clusters regardless of how many alternate anchors are given.
+     */
+    virtual vector<pair<pair<size_t, size_t>, int64_t>> pair_clusters(const Alignment& alignment_1,
+                                                                      const Alignment& alignment_2,
+                                                                      const vector<cluster_t*>& left_clusters,
+                                                                      const vector<cluster_t*>& right_clusters,
+                                                                      const vector<pair<size_t, size_t>>& left_alt_cluster_anchors,
+                                                                      const vector<pair<size_t, size_t>>& right_alt_cluster_anchors,
+                                                                      int64_t optimal_separation,
+                                                                      int64_t max_deviation) = 0;
     
 protected:
     class HitNode;
@@ -186,19 +205,23 @@ protected:
     /// Initializes a hit graph and adds edges to it, this must be implemented by any inheriting
     /// class
     virtual HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems,
-                                    BaseAligner* aligner, size_t min_mem_length) = 0;
+                                    const GSSWAligner* aligner, size_t min_mem_length) = 0;
     
     /// Once the distance between two hits has been estimated, estimate the score of the hit graph edge
     /// connecting them
     int32_t estimate_edge_score(const MaximalExactMatch* mem_1, const MaximalExactMatch* mem_2, int64_t graph_dist,
-                                BaseAligner* aligner) const;
+                                const GSSWAligner* aligner) const;
+    
+    /// Sorts cluster pairs and removes copies of the same cluster pair, choosing only the one whose distance
+    /// is closest to the optimal separation
+    void deduplicate_cluster_pairs(vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs, int64_t optimal_separation);
 };
     
 class MEMClusterer::HitGraph {
 public:
     
     /// Initializes nodes in the hit graph, but does not add edges
-    HitGraph(const vector<MaximalExactMatch>& mems, const Alignment& alignment, BaseAligner* aligner,
+    HitGraph(const vector<MaximalExactMatch>& mems, const Alignment& alignment, const GSSWAligner* aligner,
              size_t min_mem_length = 1);
     
     /// Add an edge
@@ -206,7 +229,7 @@ public:
     
     /// Returns the top scoring connected components
     vector<cluster_t> clusters(const Alignment& alignment,
-                               BaseAligner* aligner,
+                               const GSSWAligner* aligner,
                                int32_t max_qual_score,
                                int32_t log_likelihood_approx_factor,
                                size_t min_median_mem_coverage_for_split,
@@ -403,20 +426,15 @@ public:
                               bool unstranded,
                               size_t max_expected_dist_approx_error = 8);
     
-    /**
-     * Given two vectors of clusters, an xg index, an bounds on the distance between clusters,
-     * returns a vector of pairs of cluster numbers (one in each vector) matched with the estimated
-     * distance
-     */
-    static vector<pair<pair<size_t, size_t>, int64_t>> pair_clusters(const Alignment& alignment_1,
-                                                                     const Alignment& alignment_2,
-                                                                     const vector<cluster_t*>& left_clusters,
-                                                                     const vector<cluster_t*>& right_clusters,
-                                                                     const vector<pair<size_t, size_t>>& left_alt_cluster_anchors,
-                                                                     const vector<pair<size_t, size_t>>& right_alt_cluster_anchors,
-                                                                     int64_t min_inter_cluster_distance,
-                                                                     int64_t max_inter_cluster_distance,
-                                                                     OrientedDistanceMeasurer& distance_measurer);
+    /// Concrete implementation of virtual method from MEMClusterer
+    vector<pair<pair<size_t, size_t>, int64_t>> pair_clusters(const Alignment& alignment_1,
+                                                              const Alignment& alignment_2,
+                                                              const vector<cluster_t*>& left_clusters,
+                                                              const vector<cluster_t*>& right_clusters,
+                                                              const vector<pair<size_t, size_t>>& left_alt_cluster_anchors,
+                                                              const vector<pair<size_t, size_t>>& right_alt_cluster_anchors,
+                                                              int64_t optimal_separation,
+                                                              int64_t max_deviation);
     
     //static size_t PRUNE_COUNTER;
     //static size_t CLUSTER_TOTAL;
@@ -443,49 +461,45 @@ private:
      * be negative) from the first to the second along the items' forward
      * strand.
      */
-    static unordered_map<pair<size_t, size_t>, int64_t> get_on_strand_distance_tree(size_t num_items,
-                                                                                    const function<pos_t(size_t)>& get_position,
-                                                                                    const function<int64_t(size_t)>& get_offset,
-                                                                                    OrientedDistanceMeasurer& distance_measurer);
+    unordered_map<pair<size_t, size_t>, int64_t> get_on_strand_distance_tree(size_t num_items,
+                                                                             const function<pos_t(size_t)>& get_position,
+                                                                             const function<int64_t(size_t)>& get_offset);
     
     /**
      * Adds edges into the distance tree by estimating the distance between pairs
      * generated by a high entropy deterministic permutation
      */
-    static void extend_dist_tree_by_permutations(const function<pos_t(size_t)>& get_position,
-                                                 const function<int64_t(size_t)>& get_offset,
-                                                 size_t num_items,
-                                                 OrientedDistanceMeasurer& distance_measurer,
-                                                 int64_t max_failed_distance_probes,
-                                                 size_t decrement_frequency,
-                                                 unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists,
-                                                 map<pair<size_t, size_t>, size_t>& num_infinite_dists,
-                                                 UnionFind& component_union_find,
-                                                 size_t& num_possible_merges_remaining);
+    void extend_dist_tree_by_permutations(const function<pos_t(size_t)>& get_position,
+                                          const function<int64_t(size_t)>& get_offset,
+                                          size_t num_items,
+                                          int64_t max_failed_distance_probes,
+                                          size_t decrement_frequency,
+                                          unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists,
+                                          map<pair<size_t, size_t>, size_t>& num_infinite_dists,
+                                          UnionFind& component_union_find,
+                                          size_t& num_possible_merges_remaining);
     
     /**
      * Adds edges into the distance tree by estimating the distance only between pairs
      * of items that can be easily identified as having a finite distance (e.g. by sharing
      * a path)
      */
-    static void extend_dist_tree_by_buckets(const function<pos_t(size_t)>& get_position,
-                                            const function<int64_t(size_t)>& get_offset,
-                                            size_t num_items,
-                                            OrientedDistanceMeasurer& distance_measurer,
-                                            unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists,
-                                            UnionFind& component_union_find,
-                                            size_t& num_possible_merges_remaining);
+    void extend_dist_tree_by_buckets(const function<pos_t(size_t)>& get_position,
+                                     const function<int64_t(size_t)>& get_offset,
+                                     size_t num_items,
+                                     unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists,
+                                     UnionFind& component_union_find,
+                                     size_t& num_possible_merges_remaining);
     
     /**
      * Automatically blocks off merges in the distance tree between groups that can be inferred
      * to be on separate components
      */
-    static void exclude_dist_tree_merges(const function<pos_t(size_t)>& get_position,
-                                         OrientedDistanceMeasurer& distance_measurer,
-                                         map<pair<size_t, size_t>, size_t>& num_infinite_dists,
-                                         UnionFind& component_union_find,
-                                         size_t& num_possible_merges_remaining,
-                                         int64_t max_failed_distance_probes);
+    void exclude_dist_tree_merges(const function<pos_t(size_t)>& get_position,
+                                  map<pair<size_t, size_t>, size_t>& num_infinite_dists,
+                                  UnionFind& component_union_find,
+                                  size_t& num_possible_merges_remaining,
+                                  int64_t max_failed_distance_probes);
     
     /**
      * Given a number of nodes, and a map from node pair to signed relative
@@ -498,16 +512,16 @@ private:
      * Assumes all the distances are transitive, even though this isn't quite
      * true in graph space.
      */
-    static vector<unordered_map<size_t, int64_t>> flatten_distance_tree(size_t num_items,
-                                                                        const unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists);
+    vector<unordered_map<size_t, int64_t>> flatten_distance_tree(size_t num_items,
+                                                                 const unordered_map<pair<size_t, size_t>, int64_t>& recorded_finite_dists);
     
     /// Returns a vector containing the number of SMEM beginnings to the left and the number of SMEM
     /// endings to the right of each read position
     vector<pair<size_t, size_t>> compute_tail_mem_coverage(const Alignment& alignment,
                                                            const vector<MaximalExactMatch>& mems);
     
-    
-    HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems, BaseAligner* aligner,
+    /// Concrete implementation of virtual method from MEMClusterer
+    HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems, const GSSWAligner* aligner,
                             size_t min_mem_length);
     
     OrientedDistanceMeasurer& distance_measurer;
@@ -582,6 +596,9 @@ public:
     vector<handle_t> tv_path(const pos_t& pos_1, const pos_t& pos_2, int64_t target_value, int64_t tolerance);
     
 private:
+    
+    vector<handle_t> tv_phase2(const pos_t& pos_1, const pos_t& pos_2, int64_t target_value, int64_t tolerance, hash_map<pair<id_t, bool>,int64_t> node_to_target_shorter, hash_map<pair<id_t, bool>, int64_t> node_to_target_longer, pair<int64_t, pair<pair<id_t, bool>,int64_t>> best_lng, pair<int64_t, pair<pair<id_t, bool>, int64_t>> next_best, hash_map<pair<pair<id_t, bool>, int64_t>, pair<pair<id_t, bool>, int64_t>> node_to_path);
+    
     const HandleGraph& handle_graph;
     unique_ptr<DistanceHeuristic> upper_bound_heuristic;
     unique_ptr<DistanceHeuristic> lower_bound_heuristic;
@@ -595,12 +612,50 @@ public:
     TVSClusterer(const HandleGraph* handle_graph, DistanceIndex* distance_index);
     ~TVSClusterer() = default;
     
+    /// Concrete implementation of virtual method from MEMClusterer
+    vector<pair<pair<size_t, size_t>, int64_t>> pair_clusters(const Alignment& alignment_1,
+                                                              const Alignment& alignment_2,
+                                                              const vector<cluster_t*>& left_clusters,
+                                                              const vector<cluster_t*>& right_clusters,
+                                                              const vector<pair<size_t, size_t>>& left_alt_cluster_anchors,
+                                                              const vector<pair<size_t, size_t>>& right_alt_cluster_anchors,
+                                                              int64_t optimal_separation,
+                                                              int64_t max_deviation);
+    
 private:
-    HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems, BaseAligner* aligner,
+    
+    /// Concrete implementation of virtual method from MEMClusterer
+    HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems, const GSSWAligner* aligner,
                             size_t min_mem_length);
     
     TargetValueSearch tvs;
 };
+    
+class MinDistanceClusterer : public MEMClusterer {
+public:
+    MinDistanceClusterer(DistanceIndex* distance_index);
+    ~MinDistanceClusterer() = default;
+    
+    /// Concrete implementation of virtual method from MEMClusterer
+    vector<pair<pair<size_t, size_t>, int64_t>> pair_clusters(const Alignment& alignment_1,
+                                                              const Alignment& alignment_2,
+                                                              const vector<cluster_t*>& left_clusters,
+                                                              const vector<cluster_t*>& right_clusters,
+                                                              const vector<pair<size_t, size_t>>& left_alt_cluster_anchors,
+                                                              const vector<pair<size_t, size_t>>& right_alt_cluster_anchors,
+                                                              int64_t optimal_separation,
+                                                              int64_t max_deviation);
+    
+private:
+    
+    /// Concrete implementation of virtual method from MEMClusterer
+    HitGraph make_hit_graph(const Alignment& alignment, const vector<MaximalExactMatch>& mems, const GSSWAligner* aligner,
+                            size_t min_mem_length);
+    
+    const HandleGraph* handle_graph;
+    DistanceIndex* distance_index;
+};
+    
 
 /// get the handles that a mem covers
 vector<pair<gcsa::node_type, size_t> > mem_node_start_positions(const xg::XG& xg, const vg::MaximalExactMatch& mem);

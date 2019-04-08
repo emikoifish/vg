@@ -2,9 +2,12 @@
 #include "../vg.hpp"
 #include "../utility.hpp"
 #include "../mapper.hpp"
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
+#include "../stream/vpkg.hpp"
 #include "../alignment.hpp"
 #include "../annotation.hpp"
+#include "../gff_reader.hpp"
+#include "../region_expander.hpp"
 
 #include <unistd.h>
 #include <getopt.h>
@@ -18,6 +21,8 @@ void help_annotate(char** argv) {
          << "    -x, --xg-name FILE     xg index of the graph to annotate (required)" << endl
          << "    -b, --bed-name FILE    a BED file to convert to GAM. May repeat." << endl
          << "    -f, --gff-name FILE    a GFF3/GTF file to convert to GAM. May repeat." << endl
+         << "    -g, --ggff             output at GGFF subgraph annotation file instead of GAM (requires -s)" << endl
+         << "    -s, --snarls FILE      file containing snarls to expand GFF intervals into" << endl
          << "alignment annotation options:" << endl
          << "    -a, --gam FILE         file of Alignments to annotate (required)" << endl
          << "    -x, --xg-name FILE     xg index of the graph against which the Alignments are aligned (required)" << endl
@@ -84,6 +89,8 @@ int main_annotate(int argc, char** argv) {
     string gam_name;
     bool add_positions = false;
     bool novelty = false;
+    bool output_ggff = false;
+    string snarls_name;
 
     int c;
     optind = 2; // force optind past command positional argument
@@ -95,6 +102,8 @@ int main_annotate(int argc, char** argv) {
             {"xg-name", required_argument, 0, 'x'},
             {"bed-name", required_argument, 0, 'b'},
             {"gff-name", required_argument, 0, 'f'},
+            {"ggff", no_argument, 0, 'g'},
+            {"snarls", required_argument, 0, 's'},
             {"novelty", no_argument, 0, 'n'},
             {"threads", required_argument, 0, 't'},
             {"help", required_argument, 0, 'h'},
@@ -102,7 +111,7 @@ int main_annotate(int argc, char** argv) {
         };
 
         int option_index = 0;
-        c = getopt_long (argc, argv, "hx:a:pb:f:nt:h",
+        c = getopt_long (argc, argv, "hx:a:pb:f:gs:nt:h",
                 long_options, &option_index);
 
         // Detect the end of the options.
@@ -125,6 +134,14 @@ int main_annotate(int argc, char** argv) {
 
         case 'f':
             gff_names.push_back(optarg);
+            break;
+            
+        case 'g':
+            output_ggff = true;
+            break;
+                
+        case 's':
+            snarls_name = optarg;
             break;
 
         case 'p':
@@ -149,18 +166,32 @@ int main_annotate(int argc, char** argv) {
             abort ();
         }
     }
-    xg::XG* xg_index = nullptr;
+    
+    
+    unique_ptr<xg::XG> xg_index = nullptr;
     if (!xg_name.empty()) {
         get_input_file(xg_name, [&](istream& in) {
             // Read in the XG index
-            xg_index = new xg::XG(in);
+            xg_index = stream::VPKG::load_one<xg::XG>(in);
         });
     } else {
         cerr << "error [vg annotate]: no xg index provided" << endl;
         return 1;
     }
     
-    Mapper mapper(xg_index, nullptr, nullptr);
+    
+    unique_ptr<SnarlManager> snarl_manager = nullptr;
+    if (!snarls_name.empty()) {
+        ifstream snarl_stream;
+        snarl_stream.open(snarls_name);
+        if (!snarl_stream) {
+            cerr << "error:[vg mpmap] Cannot open Snarls file " << snarls_name << endl;
+            exit(1);
+        }
+        snarl_manager = stream::VPKG::load_one<SnarlManager>(snarl_stream);
+    }
+    
+    Mapper mapper(xg_index.get(), nullptr, nullptr);
     
     if (!gam_name.empty()) {
         vector<Alignment> buffer;
@@ -244,7 +275,7 @@ int main_annotate(int argc, char** argv) {
                 get_input_file(bed_name, [&](istream& bed_stream) {
                     // Load all the BED regions as Alignments embedded in the graph.
                     vector<Alignment> bed_regions;
-                    parse_bed_regions(bed_stream, xg_index, &bed_regions);
+                    parse_bed_regions(bed_stream, xg_index.get(), &bed_regions);
                     
                     for (auto& region : bed_regions) {
                         // For each region in the BED
@@ -256,7 +287,8 @@ int main_annotate(int argc, char** argv) {
                             // Scan the Mappings. We know each Mapping will be all perfect matches.
                             
                             // Record that the alignment covers the given region on the given node.
-                            features_on_node[mapping.position().node_id()].emplace_back(mapping_to_range(xg_index, mapping), interned_name);
+                            features_on_node[mapping.position().node_id()].emplace_back(mapping_to_range(xg_index.get(), mapping),
+                                interned_name);
                         }
                     }
                 });
@@ -283,7 +315,7 @@ int main_annotate(int argc, char** argv) {
                             auto features = features_on_node.find(node_id);
                             if (features != features_on_node.end()) {
                                 // Some things occur on this node. Find the overlaps with the part of the node touched by this read.
-                                auto overlapping = find_overlapping(features->second, mapping_to_range(xg_index, mapping));
+                                auto overlapping = find_overlapping(features->second, mapping_to_range(xg_index.get(), mapping));
                                 // Save them all to the set (to remove duplicates)
                                 copy(overlapping.begin(), overlapping.end(), inserter(touched_features, touched_features.begin()));
                             }
@@ -312,7 +344,8 @@ int main_annotate(int argc, char** argv) {
                 stream::write_buffered(cout, buffer, 0);
             }
         }
-    } else {
+    }
+    else {
         // Annotating the graph. We must do something.
         if (bed_names.empty() && gff_names.empty()) {
             // We weren't asked to do anything.
@@ -320,30 +353,110 @@ int main_annotate(int argc, char** argv) {
             return 1;
         }
     
-        for (auto& bed_name : bed_names) {
-            // Convert each BED file to GAM
-            get_input_file(bed_name, [&](istream& bed_stream) {
-                vector<Alignment> buffer;
-                parse_bed_regions(bed_stream, xg_index, &buffer);
-                stream::write_buffered(cout, buffer, 0); // flush
-            });
+        if (output_ggff) {
             
-            // TODO: We'll get an EOF marker per input file.
+            if (!bed_names.empty()) {
+                cerr << "error [vg annotate] BED conversion to GGFF is not currently supported. Convert to GFF3 first." << endl;
+                return 1;
+            }
+            
+            // define a function that converts to GGFF
+            RegionExpander region_expander(&(*xg_index), &(*snarl_manager));
+            function<void(const GFFRecord&)> output_ggff_record = [&](const GFFRecord& record) {
+                
+                auto subgraph = region_expander.expanded_subgraph(record);
+                
+                if (subgraph.empty()) {
+                    cout << ".";
+                }
+                
+                for (auto iter = subgraph.begin(); iter != subgraph.end(); ) {
+                    
+                    cout << iter->first.first << "[" << iter->second.first << ":" << iter->second.second << "]";
+                    if (iter->first.second) {
+                        cout << "-";
+                    }
+                    else {
+                        cout << "+";
+                    }
+                    
+                    ++iter;
+                    if (iter != subgraph.end()) {
+                        cout << ",";
+                    }
+                }
+                cout << "\t";
+                
+                if (record.source.empty()) {
+                    cout << ".";
+                }
+                else {
+                    cout << record.source;
+                }
+                cout << "\t";
+                
+                if (record.type.empty()) {
+                    cout << ".";
+                }
+                else {
+                    cout << record.type;
+                }
+                cout << "\t";
+                
+                if (isnan(record.score)) {
+                    cout << ".";
+                }
+                else {
+                    cout << record.score;
+                }
+                cout << "\t";
+                
+                if (record.phase == -1) {
+                    cout << ".";
+                }
+                else {
+                    cout << record.phase;
+                }
+                cout << "\t";
+                
+                if (record.attributes.empty()) {
+                    cout << ".";
+                }
+                else {
+                    cout << record.attributes;
+                }
+                cout << "\n";
+            };
+            
+            for (auto& gff_name : gff_names) {
+                get_input_file(gff_name, [&](istream& gff_stream) {
+                    GFFReader gff_reader(gff_stream);
+                    gff_reader.for_each_gff_record(output_ggff_record);
+                });
+            }
         }
-    
-        for (auto& gff_name : gff_names) { 
-            get_input_file(gff_name, [&](istream& gff_stream) {
-                vector<Alignment> buffer;
-                parse_gff_regions(gff_stream, xg_index, &buffer);
-                stream::write_buffered(cout, buffer, 0); // flush
-            });
+        else {
+            for (auto& bed_name : bed_names) {
+                // Convert each BED file to GAM
+                get_input_file(bed_name, [&](istream& bed_stream) {
+                    vector<Alignment> buffer;
+                    parse_bed_regions(bed_stream, xg_index.get(), &buffer);
+                    stream::write_buffered(cout, buffer, 0); // flush
+                });
+                
+                // TODO: We'll get an EOF marker per input file.
+            }
+            
+            for (auto& gff_name : gff_names) {
+                get_input_file(gff_name, [&](istream& gff_stream) {
+                    vector<Alignment> buffer;
+                    parse_gff_regions(gff_stream, xg_index.get(), &buffer);
+                    stream::write_buffered(cout, buffer, 0); // flush
+                });
+            }
         }
     }
 
-    if (xg_index) {
-        delete xg_index;
-    }
-    
     return 0;
 }
 

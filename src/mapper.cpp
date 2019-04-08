@@ -15,7 +15,8 @@ BaseMapper::BaseMapper(xg::XG* xidex,
                        gcsa::GCSA* g,
                        gcsa::LCPArray* a,
                        haplo::ScoreProvider* haplo_score_provider) :
-      xindex(xidex)
+      AlignerClient(estimate_gc_content(g))
+      , xindex(xidex)
       , gcsa(g)
       , lcp(a)
       , haplo_score_provider(haplo_score_provider)
@@ -26,17 +27,12 @@ BaseMapper::BaseMapper(xg::XG* xidex,
       , adaptive_reseed_diff(true)
       , adaptive_diff_exponent(0.065)
       , hit_max(0)
-      , alignment_threads(1)
-      , qual_adj_aligner(nullptr)
-      , regular_aligner(nullptr)
-      , adjust_alignments_for_base_quality(false)
       , mapping_quality_method(Approx)
       , max_mapping_quality(60)
       , strip_bonuses(false)
       , assume_acyclic(false)
+      , exclude_unaligned(false)
 {
-    init_aligner(default_match, default_mismatch, default_gap_open,
-                 default_gap_extension, default_full_length_bonus);
     
     // TODO: removing these consistency checks because we seem to have violated them pretty wontonly in
     // the code base already by changing the members directly when they were still public
@@ -67,12 +63,6 @@ BaseMapper::BaseMapper(void) : BaseMapper(nullptr, nullptr, nullptr) {
     // Nothing to do. Default constructed and can't really do anything.
 }
 
-BaseMapper::~BaseMapper(void) {
-    
-    clear_aligners();
-    
-}
-    
 // Use the GCSA2 index to find super-maximal exact matches.
 vector<MaximalExactMatch>
 BaseMapper::find_mems_simple(string::const_iterator seq_begin,
@@ -1580,10 +1570,6 @@ map<pos_t, char> BaseMapper::next_pos_chars(pos_t pos) {
     return xg_next_pos_chars(pos, xindex);
 }
 
-void BaseMapper::set_alignment_threads(int new_thread_count) {
-    alignment_threads = new_thread_count;
-}
-
 bool BaseMapper::has_fixed_fragment_length_distr() {
     return fragment_length_distr.is_finalized();
 }
@@ -1592,52 +1578,6 @@ void BaseMapper::force_fragment_length_distr(double mean, double stddev) {
     fragment_length_distr.force_parameters(mean, stddev);
 }
     
-BaseAligner* BaseMapper::get_aligner(bool have_qualities) const {
-    return (have_qualities && adjust_alignments_for_base_quality) ?
-        (BaseAligner*) qual_adj_aligner :
-        (BaseAligner*) regular_aligner;
-}
-
-QualAdjAligner* BaseMapper::get_qual_adj_aligner() const {
-    assert(qual_adj_aligner != nullptr);
-    return qual_adj_aligner;
-}
-
-Aligner* BaseMapper::get_regular_aligner() const {
-    assert(regular_aligner != nullptr);
-    return regular_aligner;
-}
-
-void BaseMapper::clear_aligners(void) {
-    delete qual_adj_aligner;
-    delete regular_aligner;
-    qual_adj_aligner = nullptr;
-    regular_aligner = nullptr;
-}
-
-void BaseMapper::init_aligner(int8_t match, int8_t mismatch, int8_t gap_open, int8_t gap_extend, int8_t full_length_bonus, uint32_t max_gap_length) {
-    // hacky, find max score so that scaling doesn't change score
-    int8_t max_score = match;
-    if (mismatch > max_score) max_score = mismatch;
-    if (gap_open > max_score) max_score = gap_open;
-    if (gap_extend > max_score) max_score = gap_extend;
-    
-    double gc_content = estimate_gc_content();
-    
-    qual_adj_aligner = new QualAdjAligner(match, mismatch, gap_open, gap_extend, full_length_bonus,
-                                          max_score, 255, gc_content);
-    regular_aligner = new Aligner(match, mismatch, gap_open, gap_extend, full_length_bonus, gc_content, max_gap_length);
-}
-
-void BaseMapper::load_scoring_matrix(std::ifstream& matrix_stream){
-    matrix_stream.clear();
-    matrix_stream.seekg(0);
-    if(regular_aligner) get_regular_aligner()->load_scoring_matrix(matrix_stream);
-    matrix_stream.clear();
-    matrix_stream.seekg(0);
-    if(qual_adj_aligner) get_qual_adj_aligner()->load_scoring_matrix(matrix_stream);
-}
-
 void BaseMapper::apply_haplotype_consistency_scores(const vector<Alignment*>& alns) {
     if (haplo_score_provider == nullptr) {
         // There's no haplotype data available, so we can't add consistency scores.
@@ -1654,12 +1594,17 @@ void BaseMapper::apply_haplotype_consistency_scores(const vector<Alignment*>& al
         // It won't matter either way
         return;
     }
-    
-    size_t haplotype_count = xindex->get_haplotype_count();
-    
-    if (haplotype_count == 0) {
-        // The XG apparently has no path database information. Maybe it wasn't built with the GBWT?
-        throw runtime_error("Cannot score any haplotypes with a 0 haplotype count; does the XG contain the path database?");
+   
+    // Work out the population size. Try the score provider and then fall back to the xg.
+    auto haplotype_count = haplo_score_provider->get_haplotype_count();
+    if (haplotype_count == -1) {
+        // The score provider doesn't ahve a haplotype count. Fall back to the count in the XG.
+        haplotype_count = xindex->get_haplotype_count();
+    }
+   
+    if (haplotype_count == 0 || haplotype_count == -1) {
+        // We really should have a haplotype count
+        throw runtime_error("Cannot score any haplotypes with a 0 or -1 haplotype count; are haplotypes available?");
     }
     
     // We don't look at strip_bonuses here, because we need these bonuses added
@@ -1695,6 +1640,12 @@ void BaseMapper::apply_haplotype_consistency_scores(const vector<Alignment*>& al
         bool path_valid;
         std::tie(haplotype_logprob, path_valid) = haplo_score_provider->score(aln->path(), haplo_memo);
         
+        if (std::isnan(haplotype_logprob) && path_valid) {
+            // This shouldn't happen. Bail out on haplotype adjustment for this read and warn.
+            cerr << "warning:[vg::Mapper]: NAN population score obtained for read with ostensibly successful query. Changing to failure." << endl;
+            path_valid = false;
+        }
+        
         if (!path_valid) {
             // Our path does something the scorer doesn't like.
             // Bail out of applying haplotype scores.
@@ -1722,10 +1673,12 @@ void BaseMapper::apply_haplotype_consistency_scores(const vector<Alignment*>& al
             // We actually did rescore this one
             
             // This is a score "penalty" because it is usually negative. But positive = more score.
+            // Convert to points, raise to haplotype consistency exponent power.
             double score_penalty = haplotype_consistency_exponent * (haplotype_logprobs[i] / aligner->log_base);
-
-            // Convert to points, raise to haplotype consistency exponent power, and apply
-            alns[i]->set_score(max((int64_t) 0, alns[i]->score() + (int64_t) round(score_penalty)));
+            
+            // Apply "penalty"
+            int64_t old_score = alns[i]->score();
+            alns[i]->set_score(max((int64_t) 0, old_score + (int64_t) round(score_penalty)));
             // Note that we successfully corrected the score
             set_annotation(alns[i], "haplotype_score_used", true);
             // And save the score penalty/bonus
@@ -1733,14 +1686,15 @@ void BaseMapper::apply_haplotype_consistency_scores(const vector<Alignment*>& al
 
             if (debug) {
                 cerr << "Alignment statring at " << alns[i]->path().mapping(0).position().node_id()
-                    << " got logprob " << haplotype_logprobs[i] << " moving score " << score_penalty
-                    << " from " << alns[i]->score() - score_penalty << " to " << alns[i]->score() << endl;
+                    << " got logprob " << haplotype_logprobs[i] << " vs " << haplotype_count
+                    << " haplotypes, moving score by " << score_penalty
+                    << " from " << old_score << " to " << alns[i]->score() << endl;
             }
         }
     }
 }
     
-double BaseMapper::estimate_gc_content(void) {
+double BaseMapper::estimate_gc_content(const gcsa::GCSA* gcsa) {
     
     uint64_t at = 0, gc = 0;
     
@@ -1766,13 +1720,9 @@ int BaseMapper::random_match_length(double chance_random) {
 }
 
 void BaseMapper::set_alignment_scores(int8_t match, int8_t mismatch, int8_t gap_open, int8_t gap_extend,
-    int8_t full_length_bonus, double haplotype_consistency_exponent, uint32_t max_gap_length) {
+    int8_t full_length_bonus, uint32_t xdrop_max_gap_length, double haplotype_consistency_exponent) {
     
-    // clear the existing aligners and recreate them
-    if (regular_aligner || qual_adj_aligner) {
-        clear_aligners();
-    }
-    init_aligner(match, mismatch, gap_open, gap_extend, full_length_bonus, max_gap_length);
+    AlignerClient::set_alignment_scores(match, mismatch, gap_open, gap_extend, full_length_bonus, xdrop_max_gap_length);
     
     // Save the consistency exponent
     this->haplotype_consistency_exponent = haplotype_consistency_exponent;
@@ -1891,8 +1841,7 @@ Alignment Mapper::align_to_graph(const Alignment& aln,
                                0, // band padding override
                                aln.sequence().size(),
                                0, // unroll_length
-                               xdrop_alignment,
-                               xdrop_alignment && alignment_threads > 1);
+                               xdrop_alignment);
         } else {
             aligned = vg.align_qual_adjusted(aln,
                                              get_qual_adj_aligner(),
@@ -1909,22 +1858,51 @@ Alignment Mapper::align_to_graph(const Alignment& aln,
                                              // xdrop_alignment*/);
         }
     } else {
-        // we've got an id-sortable graph and we can directly align with gssw
+        // we've got an id-sortable graph so we can avoid recomputing the topological order
+        // later because we know that we called sort_by_id_dedup_and_clean, which put it in
+        // topological order by ID
+        
         aligned = aln;
         if (banded_global) {
+            // the banded global alignment no longer constructs an internal representation of the graph
+            // for topological sorting, etc., instead counting on the HandleGraph to do that itself. accordingly
+            // we need a more serious/performant implementation of a graph here
+            VG align_graph(graph);
+            
             size_t max_span = aln.sequence().size();
             size_t band_padding_override = 0;
             bool permissive_banding = (band_padding_override == 0);
             size_t band_padding = permissive_banding ? max(max_span, (size_t) 1) : band_padding_override;
-            get_aligner(!aln.quality().empty())->align_global_banded(aligned, graph, band_padding, false);
+            get_aligner(!aln.quality().empty())->align_global_banded(aligned, align_graph, band_padding, false);
         } else if (pinned_alignment) {
-            get_aligner(!aln.quality().empty())->align_pinned(aligned, graph, pin_left);
+            // pinned alignment is based on gssw, which takes a HandleGraph, but only uses it for sorting and
+            // for constructing its own graph representation. we can improve efficiency by taking advantage of
+            // the internal sort order and a thin shim into the HandleGraph interface
+            ProtoHandleGraph proto_handle_graph(&graph);
+            // construct a topological order manually using the internal sort order
+            vector<handle_t> topological_order(graph.node_size());
+            for (size_t i = 0; i < graph.node_size(); i++) {
+                topological_order[i] = proto_handle_graph.get_handle_by_index(i);
+            }
+            get_aligner(!aln.quality().empty())->align_pinned(aligned, proto_handle_graph, topological_order, pin_left);
         } else if (xdrop_alignment) {
+            // we'll still use the Protobuf graph for the X-drop aligner, which hasn't been transitioned
+            // to HandleGraphs yet
+            
             // directly call alignment function without node translation
             // cerr << "X-drop alignment, (" << xdrop_alignment << "), rev(" << ((xdrop_alignment == 1) ? false : true) << ")" << endl;
-            get_aligner(!aln.quality().empty())->align_xdrop(aligned, graph, mems, (xdrop_alignment == 1) ? false : true, alignment_threads > 1);
+            get_aligner(!aln.quality().empty())->align_xdrop(aligned, graph, mems, (xdrop_alignment == 1) ? false : true);
         } else {
-            get_aligner(!aln.quality().empty())->align(aligned, graph, traceback, false);
+            // local alignment is based on gssw, which takes a HandleGraph, but only uses it for sorting and
+            // for constructing its own graph representation. we can improve efficiency by taking advantage of
+            // the internal sort order and a thin shim into the HandleGraph interface
+            ProtoHandleGraph proto_handle_graph(&graph);
+            // construct a topological order manually using the internal sort order
+            vector<handle_t> topological_order(graph.node_size());
+            for (size_t i = 0; i < graph.node_size(); i++) {
+                topological_order[i] = proto_handle_graph.get_handle_by_index(i);
+            }
+            get_aligner(!aln.quality().empty())->align(aligned, proto_handle_graph, topological_order, traceback, false);
         }
     }
     if (traceback && !keep_bonuses && aligned.score()) {
@@ -2139,7 +2117,7 @@ pair<bool, bool> Mapper::pair_rescue(Alignment& mate1, Alignment& mate2,
         if (rescue_off_first) {
             Alignment aln2 = align_maybe_flip(mate2, graph, orientation, traceback, acyclic_and_sorted, false, xdrop_alignment);
             tried2 = true;
-            //write_alignment_to_file(aln2, "rescue-" + h + ".gam");
+            //stream::write_to_file(aln2, "rescue-" + h + ".gam");
 #ifdef debug_rescue
             if (debug) cerr << "aln2 score/ident vs " << aln2.score() << "/" << aln2.identity()
                             << " vs " << mate2.score() << "/" << mate2.identity() << endl;
@@ -2159,7 +2137,7 @@ pair<bool, bool> Mapper::pair_rescue(Alignment& mate1, Alignment& mate2,
         } else if (rescue_off_second) {
             Alignment aln1 = align_maybe_flip(mate1, graph, orientation, traceback, acyclic_and_sorted, false, xdrop_alignment);
             tried1 = true;
-            //write_alignment_to_file(aln1, "rescue-" + h + ".gam");
+            //stream::write_to_file(aln1, "rescue-" + h + ".gam");
 #ifdef debug_rescue
             if (debug) cerr << "aln1 score/ident vs " << aln1.score() << "/" << aln1.identity()
                             << " vs " << mate1.score() << "/" << mate1.identity() << endl;
@@ -2925,14 +2903,14 @@ pair<vector<Alignment>, vector<Alignment>> Mapper::align_paired_multi(
         queued_resolve_later = true;
     }
 
-    if(results.first.empty()) {
+    if(results.first.empty() && !exclude_unaligned) {
         results.first.push_back(read1);
         auto& aln = results.first.back();
         aln.clear_path();
         aln.clear_score();
         aln.clear_identity();
     }
-    if(results.second.empty()) {
+    if(results.second.empty() && !exclude_unaligned) {
         results.second.push_back(read2);
         auto& aln = results.second.back();
         aln.clear_path();
@@ -2957,14 +2935,16 @@ pair<vector<Alignment>, vector<Alignment>> Mapper::align_paired_multi(
         aln.set_fragment_length_distribution(fragment_dist.str());
     }
 
-    // if we have references, annotate the alignments with their reference positions
-    annotate_with_initial_path_positions(results.first);
-    annotate_with_initial_path_positions(results.second);
+    if (!results.first.empty() && !results.second.empty()) {
+        // if we have references, annotate the alignments with their reference positions
+        annotate_with_initial_path_positions(results.first);
+        annotate_with_initial_path_positions(results.second);
 
-    chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
-    auto used_time = chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-    results.first.front().set_time_used(used_time);
-    results.second.front().set_time_used(used_time);
+        chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
+        auto used_time = chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+        results.first.front().set_time_used(used_time);
+        results.second.front().set_time_used(used_time);
+    }
 
     return results;
 
@@ -2975,17 +2955,7 @@ void Mapper::annotate_with_initial_path_positions(vector<Alignment>& alns) const
 }
 
 void Mapper::annotate_with_initial_path_positions(Alignment& aln) const {
-    if (!aln.refpos_size()) {
-        auto init_path_positions = alignment_path_offsets(aln);
-        for (const pair<string, vector<pair<size_t, bool> > >& pos_record : init_path_positions) {
-            for (auto& pos : pos_record.second) {
-                Position* refpos = aln.add_refpos();
-                refpos->set_name(pos_record.first);
-                refpos->set_offset(pos.first);
-                refpos->set_is_reverse(pos.second);
-            }
-        }
-    }
+    xg_annotate_with_initial_path_positions(aln, xindex);
 }
 
 double Mapper::compute_cluster_mapping_quality(const vector<vector<MaximalExactMatch> >& clusters,
@@ -3331,7 +3301,7 @@ Mapper::align_mem_multi(const Alignment& aln,
     filter_and_process_multimaps(alns, keep_multimaps);
 
     // if we didn't get anything, return an unaligned version of our input
-    if (alns.empty()) {
+    if (alns.empty() && !exclude_unaligned) {
         alns.push_back(aln);
         auto& unaligned = alns.back();
         unaligned.clear_path();
@@ -3484,7 +3454,7 @@ VG Mapper::cluster_subgraph_strict(const Alignment& aln, const vector<MaximalExa
     backward_max_dist.reserve(mems.size());
     
     // What aligner are we using?
-    BaseAligner* aligner = get_aligner();
+    const GSSWAligner* aligner = get_aligner();
     
     for (const auto& mem : mems) {
         // get the start position of the MEM
@@ -3839,7 +3809,7 @@ bool Mapper::check_alignment(const Alignment& aln) {
                  << "expect:\t" << aln.sequence() << endl
                  << "got:\t" << seq << endl;
             // save alignment
-            write_alignment_to_file(aln, "fail-" + hash_alignment(aln) + ".gam");
+            stream::write_to_file(aln, "fail-" + hash_alignment(aln) + ".gam");
             // save graph, bigger fragment
             xindex->expand_context(sub, 5, true);
             VG gn; gn.extend(sub);
@@ -3970,15 +3940,10 @@ vector<Alignment> Mapper::align_banded(const Alignment& read, int kmer_size, int
         }
     };
 
-    if (alignment_threads > 1) {
+    // Always use OMP parallelism here; restrict threads by setting OMP thread count.
 #pragma omp parallel for
-        for (int i = 0; i < bands.size(); ++i) {
-            do_band(i);
-        }
-    } else {
-        for (int i = 0; i < bands.size(); ++i) {
-            do_band(i);
-        }
+    for (int i = 0; i < bands.size(); ++i) {
+        do_band(i);
     }
 
     // cost function
@@ -4080,7 +4045,7 @@ bool Mapper::adjacent_positions(const Position& pos1, const Position& pos2) {
 void Mapper::compute_mapping_qualities(vector<Alignment>& alns, double cluster_mq, double mq_estimate, double mq_cap) {
     if (alns.empty()) return;
     double max_mq = min(mq_cap, (double)max_mapping_quality);
-    BaseAligner* aligner = get_aligner();
+    const GSSWAligner* aligner = get_aligner();
     int sub_overlaps = sub_overlaps_of_first_aln(alns, mq_overlap);
     switch (mapping_quality_method) {
         case Approx:
@@ -4098,7 +4063,7 @@ void Mapper::compute_mapping_qualities(pair<vector<Alignment>, vector<Alignment>
     if (pair_alns.first.empty() || pair_alns.second.empty()) return;
     double max_mq1 = min(mq_cap1, (double)max_mapping_quality);
     double max_mq2 = min(mq_cap2, (double)max_mapping_quality);
-    BaseAligner* aligner = get_aligner();
+    const GSSWAligner* aligner = get_aligner();
     int sub_overlaps1 = sub_overlaps_of_first_aln(pair_alns.first, mq_overlap);
     int sub_overlaps2 = sub_overlaps_of_first_aln(pair_alns.second, mq_overlap);
     vector<double> frag_weights;
@@ -4272,7 +4237,8 @@ vector<Alignment> Mapper::align_multi_internal(bool compute_unpaired_quality,
                                                         max_mem_length,
                                                         min_mem_length,
                                                         mem_reseed_length,
-                                                        false, true, true, false);
+                                                        false, true, true, true); // Make sure to actually fill in the longest LCP.
+        
         // query mem hits
         alignments = align_mem_multi(aln, mems, cluster_mq, longest_lcp, fraction_filtered, max_mem_length, keep_multimaps, additional_multimaps_for_quality, xdrop_alignment);
     }
@@ -4809,7 +4775,7 @@ void Mapper::remove_full_length_bonuses(Alignment& aln) {
 int32_t Mapper::score_alignment(const Alignment& aln, bool use_approx_distance) {
 
     // Find the right aligner to score with
-    BaseAligner* aligner = get_aligner();
+    const GSSWAligner* aligner = get_aligner();
     
     if (use_approx_distance) {
         // Use an approximation

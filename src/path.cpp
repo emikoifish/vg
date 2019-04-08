@@ -1,10 +1,36 @@
 #include "path.hpp"
-#include "stream.hpp"
+#include "stream/stream.hpp"
 #include "region.hpp"
 
 namespace vg {
 
-const std::regex Paths::is_alt("_alt_.+_[0-9]+");
+const std::function<bool(const string&)> Paths::is_alt = [](const string& path_name) {
+    // Really we want things that match the regex "_alt_.+_[0-9]+"
+    // But std::regex was taking loads and loads of time (probably matching .+) so we're replacing it with special-purpose code.
+    
+    string prefix("_alt_");
+    
+    if (path_name.length() < prefix.length() || !std::equal(prefix.begin(), prefix.end(), path_name.begin())) {
+        // We lack the prefix
+        return false;
+    }
+    
+    // Otherwise it's almost certainly an alt, but make sure it ends with numbers after '_' to be sure.
+    
+    size_t found_digits = 0;
+    for (auto it = path_name.rbegin(); it != path_name.rend() && *it != '_'; ++it) {
+        // Scan in reverse until '_' (which we know exists)
+        if (*it < '0' || *it > '9') {
+            // Out of range character
+            return false;
+        }
+        found_digits++;
+    }
+    
+    // If there were any digits, and ony digits, it matches.
+    return (found_digits > 0);
+    
+};
 
 mapping_t::mapping_t(void) : traversal(0), length(0), rank(1) { }
 
@@ -48,6 +74,10 @@ bool mapping_t::is_reverse(void) const {
 
 void mapping_t::set_is_reverse(bool is_rev) {
     traversal = abs(traversal) * (is_rev ? -1 : 1);
+}
+
+ostream& operator<<(ostream& out, mapping_t mapping) {
+    return out << mapping.node_id() << " " << (mapping.is_reverse() ? "rev" : "fwd");
 }
 
 Paths::Paths(void) {
@@ -124,11 +154,21 @@ void Paths::for_each(const function<void(const Path&)>& lambda) {
     }
 }
 
-void Paths::for_each_name(const function<void(const string&)>& lambda) {
+void Paths::for_each_name(const function<void(const string&)>& lambda) const {
     for (auto& p : _paths) {
         const string& name = p.first;
         lambda(name);
     }
+}
+
+bool Paths::for_each_name_stoppable(const function<bool(const string&)>& lambda) const {
+    for (auto& p : _paths) {
+        const string& name = p.first;
+        if (!lambda(name)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Paths::for_each_mapping(const function<void(mapping_t&)>& lambda) {
@@ -152,9 +192,10 @@ void Paths::make_linear(const string& name) {
     circular.erase(name);
 }
 
-void Paths::extend(const Path& p, bool warn_on_duplicates) {
+void Paths::extend(const Path& p, bool warn_on_duplicates, bool rebuild_indexes) {
     const string& name = p.name();
-    auto& path = get_create_path(name);
+    // Make sure we preserve empty paths
+    get_create_path(name);
     for (int i = 0; i < p.mapping_size(); ++i) {
         const Mapping& m = p.mapping(i);
         append_mapping(name, m, warn_on_duplicates);
@@ -162,30 +203,15 @@ void Paths::extend(const Path& p, bool warn_on_duplicates) {
     if (p.is_circular()) {
         make_circular(name);
     }
-    // re-sort?
-    sort_by_mapping_rank();
-    rebuild_mapping_aux();
+    if (rebuild_indexes) {
+        // re-sort?
+        sort_by_mapping_rank();
+        rebuild_mapping_aux();
+    }
 }
 
 // one of these should go away
-void Paths::extend(const Paths& p, bool warn_on_duplicates) {
-    for (auto& l : p._paths) {
-        const string& name = l.first;
-        auto& path = l.second;
-        // Make sure we preserve empty paths
-        get_create_path(name);
-        for (auto& m : path) {
-            append_mapping(name, m.to_mapping(), warn_on_duplicates);
-        }
-        if (p.circular.count(name)) {
-            make_circular(name);
-        }
-    }
-    sort_by_mapping_rank();
-    rebuild_mapping_aux();
-}
-
-void Paths::append(const Paths& paths, bool warn_on_duplicates) {
+void Paths::extend(const Paths& paths, bool warn_on_duplicates, bool rebuild_indexes) {
     for (auto& p : paths._paths) {
         const string& name = p.first;
         auto& path = p.second;
@@ -198,22 +224,34 @@ void Paths::append(const Paths& paths, bool warn_on_duplicates) {
             make_circular(name);
         }
     }
-    sort_by_mapping_rank();
-    rebuild_mapping_aux();
+    if (rebuild_indexes) {
+        sort_by_mapping_rank();
+        rebuild_mapping_aux();
+    }
 }
 
-void Paths::append(const Graph& g, bool warn_on_duplicates) {
+void Paths::extend(const vector<Path> & paths, bool warn_on_duplicates, bool rebuild_indexes) {
+    for (auto& p : paths) {
+        extend(p, warn_on_duplicates, false);
+    }
+    if (rebuild_indexes) {
+        sort_by_mapping_rank();
+        rebuild_mapping_aux();
+    }
+}
+
+void Paths::append(const Paths& paths, bool warn_on_duplicates, bool rebuild_indexes) {
+    extend(paths, warn_on_duplicates, rebuild_indexes);
+}
+
+void Paths::append(const Graph& g, bool warn_on_duplicates, bool rebuild_indexes) {
     for (int i = 0; i < g.path_size(); ++i) {
-        const Path& p = g.path(i);
         // Make sure we preserve empty paths
-        get_create_path(p.name());
-        for (int j = 0; j < p.mapping_size(); ++j) {
-            const Mapping& m = p.mapping(j);
-            append_mapping(p.name(), m, warn_on_duplicates);
-            if (p.is_circular()) {
-                make_circular(p.name());
-            }
-        }
+        extend(g.path(i), warn_on_duplicates, false);
+    }
+    if (rebuild_indexes) {
+        sort_by_mapping_rank();
+        rebuild_mapping_aux();
     }
 }
 
@@ -296,9 +334,11 @@ void Paths::append_mapping(const string& name, const mapping_t& m, bool warn_on_
     }
 }
 
-int64_t Paths::get_path_id(const string& name) {
+int64_t Paths::get_path_id(const string& name) const {
     auto f = name_to_id.find(name);
     if (f == name_to_id.end()) {
+        // Assign an ID.
+        // These members are mutable.
         ++max_path_id;
         name_to_id[name] = max_path_id;
         id_to_name[max_path_id] = name;
@@ -306,7 +346,7 @@ int64_t Paths::get_path_id(const string& name) {
     return name_to_id[name];
 }
 
-const string& Paths::get_path_name(int64_t id) {
+const string& Paths::get_path_name(int64_t id) const {
     return id_to_name[id];
 }
 
@@ -423,7 +463,7 @@ pair<mapping_t*, mapping_t*> Paths::replace_mapping(mapping_t* m, pair<mapping_t
     }
 }
 
-bool Paths::has_path(const string& name) {
+bool Paths::has_path(const string& name) const {
     return _paths.find(name) != _paths.end();
 }
 
@@ -682,6 +722,10 @@ bool Paths::has_node_mapping(Node* n) {
 
 map<int64_t, set<mapping_t*>>& Paths::get_node_mapping(id_t id) {
     return node_mapping[id];
+}
+    
+const map<int64_t, set<mapping_t*>>& Paths::get_node_mapping(id_t id) const {
+    return node_mapping.at(id);
 }
 
 map<int64_t, set<mapping_t*>>& Paths::get_node_mapping(Node* n) {
@@ -1265,7 +1309,7 @@ Path simplify(const Path& p, bool trim_internal_deletions) {
         auto& m = r.mapping(i);
         int curr_to_length = mapping_to_length(m);
         // skip bits at the beginning and end
-        if (!seen_to_length && !curr_to_length
+        if ((!seen_to_length && !curr_to_length)
             || seen_to_length == total_to_length) continue;
         Mapping n;
         *n.mutable_position() = m.position();
@@ -2182,6 +2226,31 @@ void translate_node_ids(Path& path, const unordered_map<id_t, id_t>& translator)
     }
 }
 
+void translate_node_ids(Path& path, const unordered_map<id_t, id_t>& translator, id_t cut_node, size_t bases_removed, bool from_right) {
+    // First just translate the IDs
+    translate_node_ids(path, translator);
+    
+    
+    for (size_t i = 0; i < path.mapping_size(); i++) {
+        // Scan the whole path again. We can't count on the cut node only being in the first and last mappings.
+        Position* position = path.mutable_mapping(i)->mutable_position();
+        if (position->node_id() == cut_node) {
+            // Then adjust offsets to account for the cut on the original node
+            
+            // If the position in the path is counting from the same end of the
+            // node that we didn't keep after the cut, we have to bump up its
+            // offset.
+            if ((!position->is_reverse() && !from_right) || // We cut off the left of the node, and we're counting from the left
+                (position->is_reverse() && from_right)) { // We cut off the right of the node, and we're counting from the right
+                // Update the offset to reflect the removed bases
+                position->set_offset(position->offset() + bases_removed);
+            }
+        }
+    }
+    
+    
+}
+
 void translate_oriented_node_ids(Path& path, const unordered_map<id_t, pair<id_t, bool>>& translator) {
     for (size_t i = 0; i < path.mapping_size(); i++) {
         Position* position = path.mutable_mapping(i)->mutable_position();
@@ -2237,11 +2306,11 @@ Path path_from_node_traversals(const list<NodeTraversal>& traversals) {
     return toReturn;
 }
 
-void remove_paths(Graph& graph, const std::regex& paths_to_take, std::list<Path>* matching) {
+void remove_paths(Graph& graph, const function<bool(const string&)>& paths_to_take, std::list<Path>* matching) {
 
     std::list<Path> non_matching;
     for (size_t i = 0; i < graph.path_size(); i++) {
-        if (std::regex_match(graph.path(i).name(), paths_to_take)) {
+        if (paths_to_take(graph.path(i).name())) {
             if (matching != nullptr) {
                 matching->push_back(graph.path(i));
             }

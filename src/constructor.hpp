@@ -69,15 +69,27 @@ public:
     // Should alts be interpreted as flat (false) or aligned back to the
     // reference by vcflib (true)?
     bool flat = false;
+
+    // Prefix alt paths with this string. Paths beginning with _alt_ are required
+    // for making the GBWT
+    string alt_path_prefix = "_alt_";
     
     // Should we add paths for the different alts of variants, like
     // _alt_6079b4a76d0ddd6b4b44aeb14d738509e266961c_0 and
     // _alt_6079b4a76d0ddd6b4b44aeb14d738509e266961c_1?
     bool alt_paths = false;
 
+    // When writing alt paths, just take the name from the VCF ID field (but add _0, _1 etc.)
+    // like above.  
+    bool alt_names_from_vcf_id = false;
+
     // Should we handle structural variants in the VCF file,
     // or at least the ones we know how to?
     bool do_svs = false;
+
+    // Should we trim the 1bp reference sequence that by default is placed
+    // on indel variants?
+    bool trim_indels = true;
 
     // Should we also store the alt_paths as loci?
     // e.g.
@@ -225,6 +237,8 @@ private:
     static pair<int64_t, int64_t> get_symbolic_bounds(vcflib::Variant var);
     /// What sequences have we warned about containing lowercase characters?
     mutable unordered_set<string> warned_sequences;
+    /// Have we given a warning yet about lowercase alt alleles?
+    mutable bool warned_alt = false;
     
 
 };

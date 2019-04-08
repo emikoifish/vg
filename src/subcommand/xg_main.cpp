@@ -15,11 +15,12 @@
 
 #include "sdsl/bit_vectors.hpp"
 #include "../version.hpp"
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
+#include "../stream/vpkg.hpp"
 #include "../cpp/vg.pb.h"
 #include "../xg.hpp"
 #include "../region.hpp"
-#include "../handle_to_vg.hpp"
+#include "../convert_handle.hpp"
 
 using namespace std;
 using namespace vg;
@@ -242,28 +243,26 @@ int main_xg(int argc, char** argv) {
         }
     }
 
-    XG* graph = nullptr;
+    unique_ptr<XG> graph;
     //string file_name = argv[optind];
     if (in_name.empty()) assert(!vg_in.empty());
     if (vg_in == "-") {
-        graph = new XG;
+        // Read VG from stdin
+        graph = unique_ptr<XG>(new XG());
         graph->from_stream(std::cin, validate_graph, print_graph, store_threads, is_sorted_dag);
     } else if (vg_in.size()) {
+        // Read VG from a file
         ifstream in;
         in.open(vg_in.c_str());
-        graph = new XG;
+        graph = unique_ptr<XG>(new XG());
         graph->from_stream(in, validate_graph, print_graph, store_threads, is_sorted_dag);
     }
 
     if (in_name.size()) {
-        graph = new XG;
-        if (in_name == "-") {
-            graph->load(std::cin);
-        } else {
-            ifstream in;
-            in.open(in_name.c_str());
-            graph->load(in);
-        }
+        get_input_file(in_name, [&](istream& in) {
+            // Load from an XG file or - (stdin)
+            graph = stream::VPKG::load_one<XG>(in);
+        });
     }
 
     // Prepare structure tree for serialization
@@ -276,26 +275,27 @@ int main_xg(int argc, char** argv) {
     }
 
     if(!vg_out.empty()) {
-        if (graph == nullptr) {
+        if (graph.get() == nullptr) {
              cerr << "error [vg xg] no xg graph exists to convert; Try: vg xg -i graph.xg -X graph.vg" << endl;
              return 1;
         }
         
+        VG converted;
         // Convert the xg graph to vg format
-        VG converted = handle_to_vg(graph);
+        convert_handle_graph(graph.get(), &converted);
         
-        // TODO: The converter doesn't copy paths yet. When it does, we can
-        // remove all this path copying code.
-        
+        // TODO: The converter doesn't copy circular paths yet.
+        // When it does, we can remove all this path copying code.
+
         // Make a raw Proto Graph to hold Path objects
         Graph path_graph;
-        
+
         // Since paths are not copied, copy the paths.
         for (size_t rank = 1; rank <= graph->max_path_rank(); rank++) {
             // Extract each path into the path graph
             *path_graph.add_path() = graph->path(graph->path_name(rank));
         }
-        
+
         // Merge in all the paths
         converted.extend(path_graph);
         
@@ -307,15 +307,21 @@ int main_xg(int argc, char** argv) {
     }
 
     if (!out_name.empty()) {
-        if (out_name == "-") {
-            graph->serialize(std::cout, structure.get(), "xg");
-            std::cout.flush();
-        } else {
-            ofstream out;
-            out.open(out_name.c_str());
-            graph->serialize(out, structure.get(), "xg");
-            out.flush();
+        // Open a destination file if it is a file we want to write to
+        ofstream out_file;
+        if (out_name != "-") {
+            out_file.open(out_name);
         }
+        // Work out where to save to
+        ostream& out = (out_name == "-") ? std::cout : out_file;
+        
+        // Encapsulate output in VPKG
+        stream::VPKG::with_save_stream(out, "XG", [&](ostream& tagged) {
+            // Serialize to the file while recording space usage to the structure.
+            graph->serialize(tagged, structure.get(), "xg");
+        });
+        
+        out.flush();
     }
 
     if (!report_name.empty()) {
@@ -464,9 +470,6 @@ int main_xg(int argc, char** argv) {
 //        out.open(b_array_name.c_str());
 //        graph->bs_dump(out);
 //    }
-
-    // clean up
-    if (graph) delete graph;
 
     return 0;
 }

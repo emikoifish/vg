@@ -12,6 +12,8 @@
 #include <vector>
 #include <unordered_map>
 
+#include "structures/rank_pairing_heap.hpp"
+
 #include "vg.pb.h"
 #include "vg.hpp"
 #include "snarls.hpp"
@@ -42,39 +44,43 @@ namespace vg {
         /// making it a member.
         static unordered_multimap<id_t, pair<id_t, bool>> create_injection_trans(const unordered_map<id_t, pair<id_t, bool>>& projection_trans);
         
+        /// Create an identity projection translation from a DAG that did not
+        /// need to be modified during dagification.
+        static unordered_map<id_t, pair<id_t, bool>> create_identity_projection_trans(const HandleGraph& graph);
+        
         /// Construct a graph of the reachability between MEMs in a DAG-ified
         /// graph. If a GCSA is specified, use it to collapse MEMs whose
         /// lengths bump up against the GCSA's order limit on MEM length.
         /// Produces a graph with reachability edges. Assumes that the cluster
         /// is sorted by primarily length and secondarily lexicographically by
         /// read interval.
-        MultipathAlignmentGraph(VG& vg, const MultipathMapper::memcluster_t& hits,
+        MultipathAlignmentGraph(const HandleGraph& graph, const MultipathMapper::memcluster_t& hits,
                                 const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                 const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans,
-                                gcsa::GCSA* gcsa = nullptr);
+                                size_t max_branch_trim_length = 0, gcsa::GCSA* gcsa = nullptr);
                                 
         /// Same as the previous constructor, but construct injection_trans implicitly and temporarily.
-        MultipathAlignmentGraph(VG& vg, const MultipathMapper::memcluster_t& hits,
+        MultipathAlignmentGraph(const HandleGraph& graph, const MultipathMapper::memcluster_t& hits,
                                 const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
-                                gcsa::GCSA* gcsa = nullptr);
+                                size_t max_branch_trim_length = 0, gcsa::GCSA* gcsa = nullptr);
         
         /// Construct a graph of the reachability between MEMs in a linearized
         /// path graph. Produces a graph with reachability edges.
-        MultipathAlignmentGraph(VG& vg, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
+        MultipathAlignmentGraph(const HandleGraph& graph, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
                                 const Alignment& alignment, const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                 const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans);
        
         /// Same as the previous constructor, but construct injection_trans implicitly and temporarily
-        MultipathAlignmentGraph(VG& vg, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
+        MultipathAlignmentGraph(const HandleGraph& graph, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
                                 const Alignment& alignment, const unordered_map<id_t, pair<id_t, bool>>& projection_trans);
         
         /// Make a multipath alignment graph using the path of a single-path alignment
-        MultipathAlignmentGraph(VG& vg, const Alignment& alignment, SnarlManager& snarl_manager, size_t max_snarl_cut_size,
+        MultipathAlignmentGraph(const HandleGraph& graph, const Alignment& alignment, SnarlManager& snarl_manager, size_t max_snarl_cut_size,
                                 const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                 const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans);
         
         /// Same as the previous constructor, but construct injection_trans implicitly and temporarily
-        MultipathAlignmentGraph(VG& vg, const Alignment& alignment, SnarlManager& snarl_manager, size_t max_snarl_cut_size,
+        MultipathAlignmentGraph(const HandleGraph& graph, const Alignment& alignment, SnarlManager& snarl_manager, size_t max_snarl_cut_size,
                                 const unordered_map<id_t, pair<id_t, bool>>& projection_trans);
         
         ~MultipathAlignmentGraph();
@@ -94,12 +100,16 @@ namespace vg {
         
         /// Removes nodes and edges that are not part of any path that has an estimated score
         /// within some amount of the highest scoring path. Reachability edges must be present.
-        void prune_to_high_scoring_paths(const Alignment& alignment, const BaseAligner* aligner,
+        void prune_to_high_scoring_paths(const Alignment& alignment, const GSSWAligner* aligner,
                                          double max_suboptimal_score_ratio, const vector<size_t>& topological_order);
         
         /// Clear reachability edges, so that add_reachability_edges can be run
         /// (possibly after modifying the graph).
         void clear_reachability_edges();
+        
+        /// Remove the ends of paths, up to a maximum length, if they cause the path
+        /// to extend past a branch point in the graph.
+        void trim_to_branch_points(const HandleGraph* graph, size_t max_trim_length = 1);
         
         /// Cut the interior of snarls out of anchoring paths (and split
         /// alignment nodes accordingly) unless they are longer than the max
@@ -107,31 +117,62 @@ namespace vg {
         void resect_snarls_from_paths(SnarlManager* cutting_snarls, const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                       int64_t max_snarl_cut_size = 5);
         
+        /// Do some exploratory alignments of the tails of the graph, outside
+        /// the outermost existing anchors, and define new anchoring paths from
+        /// them. After this, you can call resect_snarls_from_paths, in order
+        /// to get better coverage of possible combinations of snarl traversals
+        /// in parts of the alignment that didn't originally have anchors.
+        /// Produces *only* perfect match anchors, so it is still safe to use
+        /// score_anchors_as_matches. The Alignment passed *must* be the same
+        /// Alignment that owns the sequence into which iterators were passed
+        /// when the MultipathAlignmentGraph was constructed! TODO: Shouldn't
+        /// the class hold a reference to the Alignment then?
+        void synthesize_tail_anchors(const Alignment& alignment, const HandleGraph& align_graph, const GSSWAligner* aligner,
+                                     size_t max_alt_alns, bool dynamic_alt_alns);
+        
         /// Add edges between reachable nodes and split nodes at overlaps
-        void add_reachability_edges(VG& vg,
+        void add_reachability_edges(const HandleGraph& vg,
                                     const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                     const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans);
                                     
-        /// Do intervening and tail alignments between the anchoring paths and store the result
-        /// in a MultipathAlignment. Reachability edges must be in the graph.
-        void align(const Alignment& alignment, VG& align_graph, BaseAligner* aligner, bool score_anchors_as_matches,
-                   size_t max_alt_alns, bool dynamic_alt_alns, size_t band_padding, MultipathAlignment& multipath_aln_out);
+        /// Do intervening and tail alignments between the anchoring paths and
+        /// store the result in a MultipathAlignment. Reachability edges must
+        /// be in the graph. The Alignment passed *must* be the same Alignment
+        /// that owns the sequence into which iterators were passed when the
+        /// MultipathAlignmentGraph was constructed! TODO: Shouldn't the class
+        /// hold a reference to the Alignment then?
+        ///
+        /// Note that the output alignment may NOT be in topologically-sorted
+        /// order, even if this MultipathAlignmentGraph is. You MUST sort it
+        /// with topologically_order_subpaths() before trying to run DP on it.
+        void align(const Alignment& alignment, const HandleGraph& align_graph, const GSSWAligner* aligner, bool score_anchors_as_matches,
+                   size_t max_alt_alns, bool dynamic_alt_alns, size_t band_padding, MultipathAlignment& multipath_aln_out, const bool allow_negative_scores = false);
         
-        /// Do intervening and tail alignments between the anchoring paths and store the result
-        /// in a MultipathAlignment. Reachability edges must be in the graph. Also, choose the
-        /// band padding dynamically as a function of the inter-MEM sequence and graph
-        void align(const Alignment& alignment, VG& align_graph, BaseAligner* aligner, bool score_anchors_as_matches,
+        /// Do intervening and tail alignments between the anchoring paths and
+        /// store the result in a MultipathAlignment. Reachability edges must
+        /// be in the graph. Also, choose the band padding dynamically as a
+        /// function of the inter-MEM sequence and graph. The Alignment passed
+        /// *must* be the same Alignment that owns the sequence into which
+        /// iterators were passed when the MultipathAlignmentGraph was
+        /// constructed! TODO: Shouldn't the class hold a reference to the
+        /// Alignment then?
+        ///
+        /// Note that the output alignment may NOT be in topologically-sorted
+        /// order, even if this MultipathAlignmentGraph is. You MUST sort it
+        /// with topologically_order_subpaths() before trying to run DP on it.
+        void align(const Alignment& alignment, const HandleGraph& align_graph, const GSSWAligner* aligner, bool score_anchors_as_matches,
                    size_t max_alt_alns, bool dynamic_alt_alns,
                    function<size_t(const Alignment&,const HandleGraph&)> band_padding_function,
-                   MultipathAlignment& multipath_aln_out);
+                   MultipathAlignment& multipath_aln_out, const bool allow_negative_scores = false);
         
         /// Converts a MultipathAlignmentGraph to a GraphViz Dot representation, output to the given ostream.
-        void to_dot(ostream& out) const;
+        /// If given the Alignment query we are working on, can produce information about subpath iterators.
+        void to_dot(ostream& out, const Alignment* alignment = nullptr) const;
         
         /// Get lists of the vg node IDs that participate in each connected component in the MultipathAlignmentGraph
         vector<vector<id_t>> get_connected_components() const;
         
-        /// Does the multipath alignment xgraph have any nodes?
+        /// Does the multipath alignment graph have any nodes?
         bool empty();
         
     private:
@@ -147,30 +188,43 @@ namespace vg {
         /// If this is unset and you want it set, use add_reachability_edges().
         bool has_reachability_edges = false;
         
+        /// Trim down the given PathNode of everything except softclips.
+        /// Return true if it all gets trimmed away and should be removed.
+        /// Fills in removed_start_from_length and/or removed_end_from_length
+        /// with the bases in the graph removed from the path on each end
+        /// during trimming, if set.
+        static bool trim_and_check_for_empty(const Alignment& alignment, PathNode& path_node,
+            int64_t* removed_start_from_length = nullptr, int64_t* removed_end_from_length = nullptr);
         
         /// Add the path chunks as nodes to the connectivity graph
-        void create_path_chunk_nodes(VG& vg, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
+        void create_path_chunk_nodes(const HandleGraph& graph, const vector<pair<pair<string::const_iterator, string::const_iterator>, Path>>& path_chunks,
                                      const Alignment& alignment, const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                      const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans);
         
         /// Walk out MEMs into match nodes and filter out redundant sub-MEMs
-        void create_match_nodes(VG& vg, const MultipathMapper::memcluster_t& hits,
+        void create_match_nodes(const HandleGraph& graph, const MultipathMapper::memcluster_t& hits,
                                 const unordered_map<id_t, pair<id_t, bool>>& projection_trans,
                                 const unordered_multimap<id_t, pair<id_t, bool>>& injection_trans);
         
         /// Identifies runs of exact matches that are sub-maximal because they hit the order of the GCSA
         /// index and merges them into a single node, assumes that match nodes are sorted by length and
         /// then lexicographically by read interval, does not update edges
-        void collapse_order_length_runs(VG& vg, gcsa::GCSA* gcsa);
+        void collapse_order_length_runs(const HandleGraph& graph, gcsa::GCSA* gcsa);
         
         /// Reorders adjacency list representation of edges so that they follow the indicated
         /// ordering of their target nodes
         void reorder_adjacency_lists(const vector<size_t>& order);
         
-        // Reorders the nodes of a Protobuf graph in topological order, flips doubly reversing edges,
-        // and removes empty sequence nodes (invariants required for gssw alignment)
-        // TODO: this is duplicative with VG::lazy_sort, but I don't want to construct a VG here
-        void groom_graph_for_gssw(Graph& graph);
+        /// Generate alignments of the tails of the query sequence, beyond the
+        /// sources and sinks. The Alignment passed *must* be the one that owns
+        /// the sequence we are working on. Returns a map from tail
+        /// (left=false, right=true), to a map from subpath number to all the
+        /// Alignments of the tail off of that subpath. Also computes the
+        /// source subpaths and adds their numbers to the given set if not
+        /// null.
+        unordered_map<bool, unordered_map<size_t, vector<Alignment>>>
+        align_tails(const Alignment& alignment, const HandleGraph& align_graph, const GSSWAligner* aligner,
+                    size_t max_alt_alns, bool dynamic_alt_alns, unordered_set<size_t>* sources = nullptr);
     };
 }
 

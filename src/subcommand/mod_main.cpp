@@ -12,7 +12,7 @@
 
 #include "../vg.hpp"
 #include "../cactus.hpp"
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
 #include "../utility.hpp"
 #include "../algorithms/topological_sort.hpp"
 #include "../algorithms/remove_high_degree.hpp"
@@ -33,7 +33,6 @@ void help_mod(char** argv) {
          << "    -P, --label-paths       don't edit with -i alignments, just use them for labeling the graph" << endl
          << "    -c, --compact-ids       should we sort and compact the id space? (default false)" << endl
          << "    -C, --compact-ranks     compact mapping ranks in paths" << endl
-         << "    -z, --sort              sort the graph using an approximate topological sort" << endl
          << "    -b, --break-cycles      use an approximate topological sort to break cycles in the graph" << endl
          << "    -n, --normalize         normalize the graph so that edges are always non-redundant" << endl
          << "                            (nodes have unique starting and ending bases relative to neighbors," << endl
@@ -107,7 +106,6 @@ int main_mod(int argc, char** argv) {
     bool simplify_graph = false;
     bool unchop = false;
     bool normalize_graph = false;
-    bool sort_graph = false;
     bool remove_non_path = false;
     bool remove_path = false;
     bool compact_ranks = false;
@@ -162,12 +160,12 @@ int main_mod(int argc, char** argv) {
             {"unchop", no_argument, 0, 'u'},
             {"normalize", no_argument, 0, 'n'},
             {"until-normal", required_argument, 0, 'U'},
-            {"sort", no_argument, 0, 'z'},
             {"remove-non-path", no_argument, 0, 'N'},
             {"remove-path", no_argument, 0, 'A'},
             {"orient-forward", no_argument, 0, 'O'},
             {"unfold", required_argument, 0, 'f'},
             {"retain-path", required_argument, 0, 'r'},
+            {"retain-complement", no_argument, 0, 'I'},
             {"subgraph", required_argument, 0, 'g'},
             {"context", required_argument, 0, 'x'},
             {"remove-null", no_argument, 0, 'R'},
@@ -201,19 +199,23 @@ int main_mod(int argc, char** argv) {
         {
 
         case 'i':
+            cerr << "[vg mod] warning: vg mod -i is deprecated and will soon be removed.  please switch to vg augment" << endl;
             aln_file = optarg;
             break;
 
         case 'q':
+            cerr << "[vg mod] warning: vg mod -q is deprecated and will soon be removed.  please switch to vg augment -l" << endl;
             loci_file = optarg;
             break;
 
         case 'Q':
+            cerr << "[vg mod] warning: vg mod -l is deprecated and will soon be removed.  please switch to vg augment -L" << endl;
             loci_file = optarg;
             called_genotypes_only = true;
             break;
 
         case 'Z':
+            cerr << "[vg mod] warning: vg mod -Z is deprecated and will soon be removed.  please switch to vg augment -Z" << endl;
             translation_file = optarg;
             break;
 
@@ -290,6 +292,7 @@ int main_mod(int argc, char** argv) {
             break;
 
         case 'P':
+            cerr << "[vg mod] warning: vg mod -P is deprecated and will soon be removed.  please switch to vg augment -B" << endl;
             label_paths = true;
             break;
 
@@ -335,10 +338,6 @@ int main_mod(int argc, char** argv) {
 
         case 'B':
             bluntify = true;
-            break;
-
-        case 'z':
-            sort_graph = true;
             break;
 
         case 'b':
@@ -412,9 +411,9 @@ int main_mod(int argc, char** argv) {
         // We need to throw out the parts of the graph that are on alt paths,
         // but not on alt paths for alts used by the first sample in the VCF.
 
-        // This is matched against the entire path name string to detect alt
+        // This is called with the entire path name string to detect alt
         // paths.
-        const regex& is_alt = Paths::is_alt;
+        const function<bool(const string&)>& is_alt = Paths::is_alt;
 
         // This holds the VCF file we read the variants from. It needs to be the
         // same one used to construct the graph.
@@ -438,7 +437,7 @@ int main_mod(int argc, char** argv) {
         graph->paths.for_each_name([&](const string& alt_path_name) {
             // For every path name in the graph
 
-            if(regex_match(alt_path_name, is_alt)) {
+            if(is_alt(alt_path_name)) {
                 // If it's an alt path
 
                 for(auto& mapping : graph->paths.get_path(alt_path_name)) {
@@ -698,10 +697,6 @@ int main_mod(int argc, char** argv) {
         graph->remove_null_nodes_forwarding_edges();
     }
 
-    if (sort_graph) {
-        algorithms::sort(graph);
-    }
-
     if (break_cycles) {
         graph->break_cycles();
     }
@@ -752,9 +747,7 @@ int main_mod(int argc, char** argv) {
             }
         } else {
             // just add the path labels to the graph
-            for (auto& path : paths) {
-                graph->paths.extend(path);
-            }
+            graph->paths.extend(paths);
         }
     }
 
@@ -802,7 +795,7 @@ int main_mod(int argc, char** argv) {
 
     // and optionally compact ids
     if (compact_ids) {
-        algorithms::sort(graph);
+        algorithms::topological_sort(graph);
         graph->compact_ids();
     }
 
@@ -840,6 +833,7 @@ int main_mod(int argc, char** argv) {
             cerr << "[vg mod]: when adding start and end markers you must provide a --path-length" << endl;
             return 1;
         }
+        // TODO: replace this with the SourceSinkOverlay somehow?
         Node* head_node = NULL;
         Node* tail_node = NULL;
         vg::id_t head_id = 0, tail_id = 0;
@@ -852,7 +846,7 @@ int main_mod(int argc, char** argv) {
 
     if (cactus) {
         // ensure we're sorted
-        algorithms::sort(graph);
+        algorithms::topological_sort(graph);
         *graph = cactusify(*graph);
         // no paths survive, make sure they are erased
         graph->paths = Paths();

@@ -15,7 +15,7 @@
 
 #include "../utility.hpp"
 #include "../vg.hpp"
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
 
 using namespace std;
 using namespace vg;
@@ -201,7 +201,7 @@ int main_align(int argc, char** argv) {
         Aligner aligner = Aligner(match, mismatch, gap_open, gap_extend, full_length_bonus, vg::default_gc_content, seq.size());
         if(matrix_stream.is_open()) aligner.load_scoring_matrix(matrix_stream);
         alignment = graph->align(seq, &aligner, true, false, 0, pinned_alignment, pin_left,
-                                 banded_global, 0, 0, 0, 0, 0, debug);
+                                 banded_global, 0, 0, 0, 0, debug);
     }
 
     if (!seq_name.empty()) {

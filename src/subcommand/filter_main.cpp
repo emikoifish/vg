@@ -15,6 +15,7 @@
 
 #include "../vg.hpp"
 #include "../readfilter.hpp"
+#include "../stream/vpkg.hpp"
 
 using namespace std;
 using namespace vg;
@@ -26,7 +27,9 @@ void help_filter(char** argv) {
          << endl
          << "options:" << endl
          << "    -n, --name-prefix NAME     keep only reads with this prefix in their names [default='']" << endl
+         << "    -N, --name-prefixes FILE   keep reads with names with one of many prefixes, one per nonempty line" << endl
          << "    -X, --exclude-contig REGEX drop reads with refpos annotations on contigs matching the given regex (may repeat)" << endl
+         << "    -F, --exclude-feature NAME drop reads with the given feature in the \"features\" annotation (may repeat)" << endl
          << "    -s, --min-secondary N      minimum score to keep secondary alignment [default=0]" << endl
          << "    -r, --min-primary N        minimum score to keep primary alignment [default=0]" << endl
          << "    -O, --rescore              re-score reads using default parameters and only alignment information" << endl
@@ -35,17 +38,19 @@ void help_filter(char** argv) {
          << "    -o, --max-overhang N       filter reads whose alignments begin or end with an insert > N [default=99999]" << endl
          << "    -m, --min-end-matches N    filter reads that don't begin with at least N matches on each end" << endl
          << "    -S, --drop-split           remove split reads taking nonexistent edges" << endl
-         << "    -x, --xg-name FILE         use this xg index (required for -R, -S, and -D)" << endl
-         << "    -R, --regions-file         only output alignments that intersect regions (BED file with 0-based coordinates expected)" << endl
-         << "    -B, --output-basename      output to file(s) (required for -R).  The ith file will correspond to the ith BED region" << endl
+         << "    -x, --xg-name FILE         use this xg index (required for -S and -D)" << endl
          << "    -A, --append-regions       append to alignments created with -RB" << endl
-         << "    -c, --context STEPS        expand the context of the subgraph this many steps when looking up chunks" << endl
          << "    -v, --verbose              print out statistics on numbers of reads filtered by what." << endl
+         << "    -V, --no-output            print out statistics (as above) but do not write out filtered GAM." << endl
          << "    -q, --min-mapq N           filter alignments with mapping quality < N" << endl
          << "    -E, --repeat-ends N        filter reads with tandem repeat (motif size <= 2N, spanning >= N bases) at either end" << endl
          << "    -D, --defray-ends N        clip back the ends of reads that are ambiguously aligned, up to N bases" << endl
          << "    -C, --defray-count N       stop defraying after N nodes visited (used to keep runtime in check) [default=99999]" << endl
          << "    -d, --downsample S.P       filter out all but the given portion 0.P of the reads. S may be an integer seed as in SAMtools" << endl
+         << "    -i, --interleaved          assume interleaved input. both ends will be filtered out if either fails filter" << endl
+         << "    -I, --interleaved-all      assume interleaved input. both ends will be filtered out if *both* fail filters" << endl
+         << "    -b, --min-base-quality Q:F filter reads with where fewer than fraction F bases have base quality >= PHRED score Q." << endl
+         << "    -U, --complement           apply the complement of the filter implied by the other arguments." << endl
          << "    -t, --threads N            number of threads [1]" << endl;
 }
 
@@ -71,7 +76,9 @@ int main_filter(int argc, char** argv) {
         static struct option long_options[] =
             {
                 {"name-prefix", required_argument, 0, 'n'},
+                {"name-prefixes", required_argument, 0, 'N'},
                 {"exclude-contig", required_argument, 0, 'X'},
+                {"exclude-feature", required_argument, 0, 'F'},
                 {"min-secondary", required_argument, 0, 's'},
                 {"min-primary", required_argument, 0, 'r'},
                 {"rescore", no_argument, 0, 'O'},
@@ -81,22 +88,23 @@ int main_filter(int argc, char** argv) {
                 {"min-end-matches", required_argument, 0, 'm'},
                 {"drop-split",  no_argument, 0, 'S'},
                 {"xg-name", required_argument, 0, 'x'},
-                {"regions-file",  required_argument, 0, 'R'},
-                {"output-basename",  required_argument, 0, 'B'},
                 {"append-regions", no_argument, 0, 'A'},
-                {"context",  required_argument, 0, 'c'},
                 {"verbose",  no_argument, 0, 'v'},
                 {"min-mapq", required_argument, 0, 'q'},
                 {"repeat-ends", required_argument, 0, 'E'},
                 {"defray-ends", required_argument, 0, 'D'},
                 {"defray-count", required_argument, 0, 'C'},
                 {"downsample", required_argument, 0, 'd'},
+                {"interleaved", no_argument, 0, 'i'},
+                {"interleaved-all", no_argument, 0, 'I'},
+                {"min-base-quality", required_argument, 0, 'b'},
+                {"complement", no_argument, 0, 'U'},
                 {"threads", required_argument, 0, 't'},
                 {0, 0, 0, 0}
             };
 
         int option_index = 0;
-        c = getopt_long (argc, argv, "n:X:s:r:Od:e:fauo:m:Sx:R:B:Ac:vq:E:D:C:d:t:",
+        c = getopt_long (argc, argv, "n:N:X:F:s:r:Od:e:fauo:m:Sx:AvVq:E:D:C:d:iIb:Ut:",
                          long_options, &option_index);
 
         /* Detect the end of the options. */
@@ -106,10 +114,26 @@ int main_filter(int argc, char** argv) {
         switch (c)
         {
         case 'n':
-            filter.name_prefix = optarg;
+            filter.name_prefixes.push_back(optarg);
+            break;
+        case 'N':
+            get_input_file(optarg, [&](istream& in) {
+                // Parse the input file right here in the option parsing.
+                for (string line; getline(in, line);) {
+                    // For each line
+                    if (line.empty()) {
+                        // No empty lines
+                        break;
+                    }
+                    filter.name_prefixes.push_back(line);
+                }
+            });
             break;
         case 'X':
             filter.excluded_refpos_contigs.push_back(parse<std::regex>(optarg));
+            break;
+        case 'F':
+            filter.excluded_features.insert(optarg);
             break;
         case 's':
             filter.min_secondary = parse<double>(optarg);
@@ -137,23 +161,18 @@ int main_filter(int argc, char** argv) {
         case 'x':
             xg_name = optarg;
             break;
-        case 'R':
-            filter.regions_file = optarg;
-            break;
-        case 'B':
-            filter.outbase = optarg;
-            break;
         case 'A':
             filter.append_regions = true;
-            break;
-        case 'c':
-            filter.context_size = parse<int>(optarg);
             break;
         case 'q':
             filter.min_mapq = parse<double>(optarg);
             break;
         case 'v':
             filter.verbose = true;
+            break;
+        case 'V':
+            filter.verbose = true;
+            filter.write_output = false;
             break;
         case 'E':
             filter.repeat_size = parse<int>(optarg);
@@ -202,8 +221,33 @@ int main_filter(int argc, char** argv) {
                 }
             }
             break;
+        case 'i':
+            filter.interleaved = true;
+            break;
+        case 'I':
+            filter.interleaved = true;
+            filter.filter_on_all = true;
+            break;
+        case 'b':
+            {
+                vector<string> parts = split_delims(string(optarg), ":");
+                if (parts.size() != 2) {
+                    cerr << "[vg filter] Error: -b expects value in form of <INT>:<FLOAT>" << endl;
+                    return 1;
+                }
+                filter.min_base_quality = parse<int>(parts[0]);
+                filter.min_base_quality_fraction = parse<double>(parts[1]);
+                if (filter.min_base_quality_fraction < 0 || filter.min_base_quality_fraction > 1) {
+                    cerr << "[vg filter] Error: second part of -b input must be between 0 and 1" << endl;
+                    return 1;
+                }
+            }
+            break;
+        case 'U':
+            filter.complement_filter = true;
+            break;
         case 't':
-            filter.threads = parse<int>(optarg);
+            omp_set_num_threads(parse<int>(optarg));
             break;
 
         case 'h':
@@ -218,14 +262,8 @@ int main_filter(int argc, char** argv) {
         }
     }
 
-    if (filter.threads < 1) {
-        cerr << "error:[vg filter]: Cannot use " << filter.threads << " threads." << endl;
-        exit(1);
-    }
-
-    omp_set_num_threads(filter.threads);
+    filter.threads = get_thread_count();
     
-    // setup alignment stream
     if (optind >= argc) {
         help_filter(argv);
         return 1;
@@ -233,36 +271,29 @@ int main_filter(int argc, char** argv) {
 
     // What should our return code be?
     int error_code = 0;
-
+    
+    // Sort the prefixes for reads we will accept, for efficient search
+    sort(filter.name_prefixes.begin(), filter.name_prefixes.end());
+    
+     // If the user gave us an XG index, we probably ought to load it up.
+    unique_ptr<xg::XG> xindex;
+    if (!xg_name.empty()) {
+        // read the xg index
+        xindex = stream::VPKG::load_one<xg::XG>(xg_name);
+    }
+    filter.xindex = xindex.get();
+    
+    // Read in the alignments and filter them.
     get_input_file(optind, argc, argv, [&](istream& in) {
         // Open up the alignment stream
         
-        // If the user gave us an XG index, we probably ought to load it up.
-        // TODO: make sure if we add any other error exits from this function we
-        // remember to delete this!
-        xg::XG* xindex = nullptr;
-        if (!xg_name.empty()) {
-            // read the xg index
-            ifstream xg_stream(xg_name);
-            if(!xg_stream) {
-                cerr << "Unable to open xg index: " << xg_name << endl;
-                error_code = 1;
-                return;
-            }
-            xindex = new xg::XG(xg_stream);
-        }
-    
         // Read in the alignments and filter them.
-        error_code = filter.filter(&in, xindex);
-        
-        if(xindex != nullptr) {
-            delete xindex;
-        }
+        error_code = filter.filter(&in);
     });
 
     return error_code;
 }
 
 // Register subcommand
-static Subcommand vg_vectorize("filter", "filter reads", main_filter);
+static Subcommand vg_filter("filter", "filter reads", main_filter);
 

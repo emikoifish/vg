@@ -8,7 +8,7 @@
 #include <string>
 #include "../json2pb.h"
 #include "../vg.pb.h"
-#include "../gssw_aligner.hpp"
+#include "../aligner.hpp"
 #include "catch.hpp"
 
 namespace vg {
@@ -37,8 +37,8 @@ TEST_CASE("Aligner respects the full length bonus at both ends", "[aligner][alig
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonus is collected at both ends") {
         REQUIRE(aln2.score() == aln1.score() + 20);
@@ -68,8 +68,8 @@ TEST_CASE("Aligner respects the full length bonus for a single base read", "[ali
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonus is collected twice even though both ends are one match") {
         REQUIRE(aln2.score() == aln1.score() + 20);
@@ -99,8 +99,8 @@ TEST_CASE("Aligner works when end bonus is granted to a match at the start of a 
     aln2.set_sequence(read);
     
     // Make sure aligner runs
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonus is collected twice") {
         REQUIRE(aln2.score() == aln1.score() + 20);
@@ -120,8 +120,8 @@ TEST_CASE("Full-length bonus can hold down the left end", "[aligner][alignment][
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("left end is detatched without bonus") {
         REQUIRE(aln1.path().mapping_size() == 1);
@@ -155,8 +155,8 @@ TEST_CASE("Full-length bonus can hold down the right end", "[aligner][alignment]
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("right end is detatched without bonus") {
         REQUIRE(aln1.path().mapping_size() == 1);
@@ -200,8 +200,8 @@ TEST_CASE("Full-length bonus can attach Ns", "[aligner][alignment][mapping]") {
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonused alignment ends in full-length match/mismatches") {
         REQUIRE(aln2.path().mapping_size() == 3);
@@ -239,8 +239,8 @@ TEST_CASE("Full-length bonus can attach to Ns", "[aligner][alignment][mapping]")
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonused alignment ends in full-length match/mismatches") {
         REQUIRE(aln2.path().mapping_size() == 3);
@@ -278,8 +278,8 @@ TEST_CASE("Full-length bonus can attach Ns to Ns", "[aligner][alignment][mapping
     aln1.set_sequence(read);
     aln2.set_sequence(read);
     
-    aligner_1.align(aln1, graph.graph, true, false);
-    aligner_2.align(aln2, graph.graph, true, false);
+    aligner_1.align(aln1, graph, true, false);
+    aligner_2.align(aln2, graph, true, false);
     
     SECTION("bonused alignment ends in full-length match/mismatches") {
         REQUIRE(aln2.path().mapping_size() == 3);
@@ -316,7 +316,7 @@ TEST_CASE("Full-length bonus is applied to both ends by rescoring", "[aligner][a
     REQUIRE(aligner1.score_ungapped_alignment(aln) == 139);
 }
 
-TEST_CASE("BaseAligner mapping quality estimation is robust", "[aligner][alignment][mapping][mapq]") {
+TEST_CASE("GSSWAligner mapping quality estimation is robust", "[aligner][alignment][mapping][mapq]") {
     
     vector<double> scaled_scores;
     size_t max_idx;
@@ -327,25 +327,25 @@ TEST_CASE("BaseAligner mapping quality estimation is robust", "[aligner][alignme
         
         SECTION("a 1-element positive vector has its element chosen") {
             scaled_scores = {10};
-            BaseAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a 1-element zero vector has its element chosen") {
             scaled_scores = {0};
-            BaseAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a 1-element negative vector has its element chosen") {
             scaled_scores = {-10};
-            BaseAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a multi-element vector has a maximal element chosen") {
             scaled_scores = {1, 5, 2, 5, 4};
-            BaseAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_exact(scaled_scores, &max_idx);
             REQUIRE(max_idx >= 1);
             REQUIRE(max_idx != 2);
             REQUIRE(max_idx <= 3);
@@ -358,25 +358,25 @@ TEST_CASE("BaseAligner mapping quality estimation is robust", "[aligner][alignme
 
         SECTION("a 1-element positive vector has its element chosen") {
             scaled_scores = {10};
-            BaseAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a 1-element zero vector has its element chosen") {
             scaled_scores = {0};
-            BaseAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a 1-element negative vector has its element chosen") {
             scaled_scores = {-10};
-            BaseAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
             REQUIRE(max_idx == 0);
         }
         
         SECTION("a multi-element vector has a maximal element chosen") {
             scaled_scores = {1, 5, 2, 5, 4};
-            BaseAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
+            GSSWAligner::maximum_mapping_quality_approx(scaled_scores, &max_idx);
             REQUIRE(max_idx >= 1);
             REQUIRE(max_idx != 2);
             REQUIRE(max_idx <= 3);

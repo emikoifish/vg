@@ -139,6 +139,7 @@ void Genotyper::run(AugmentedGraph& augmented_graph,
 
         if (snarl->type() != ULTRABUBBLE) {
             // We only work on ultrabubbles right now
+            cerr << "Skip snarl " << snarl->start() << " - " << snarl->end() << " due to not being an ultrabubble" << endl;
             return;
         }
 
@@ -153,10 +154,46 @@ void Genotyper::run(AugmentedGraph& augmented_graph,
             use_traversal_alg = read_bounded ? TraversalAlg::Reads : TraversalAlg::Representative;
         }
 
-        if ((use_traversal_alg != TraversalAlg::Reads && !manager.is_leaf(snarl)) ||
-            (use_traversal_alg == TraversalAlg::Reads && !manager.is_root(snarl))) {
+        if (use_traversal_alg == TraversalAlg::Exhaustive &&
+            !manager.is_leaf(snarl)) {
+            // The SupportRestrictedTraversalFinder we use in Exhaustive mode
+            // can only handle leaf snarls.
+
             // Todo : support nesting hierarchy!
+            if (show_progress) {
+                cerr << "Skip snarl " << snarl->start() << " - " << snarl->end()
+                    << " because it isn't a leaf and traversal algorithm "
+                    << alg2name[use_traversal_alg] << " only works on leaves" << endl;
+            }
+            return;
+        }
+
+        if (use_traversal_alg == TraversalAlg::Representative && !manager.all_children_trivial(snarl, graph)) {
+            // The RepresentativeTraversalFinder works for root and leaf
+            // snarls, but unless we're in a leaf snarl, or a snarl with only
+            // trivial children, it outputs traversals with child snarls in
+            // them that the rest of genotype can't yet handle.
+
+            // Todo : support nesting hierarchy!
+            if (show_progress) {
+                cerr << "Skip snarl " << snarl->start() << " - " << snarl->end()
+                    << " because it has nontrivial children and traversal algorithm "
+                    << alg2name[use_traversal_alg] << " will produce nested child snarl traversals" << endl;
+            }
+            return;
+        }
+
+
+        if (use_traversal_alg == TraversalAlg::Reads && !manager.is_root(snarl)) {
+            // The ReadRestrictedTraversalFinder only works for root snarls.
+            // TODO: How do we know this?
             
+            // Todo : support nesting hierarchy!
+            if (show_progress) {
+                cerr << "Skip snarl " << snarl->start() << " - " << snarl->end()
+                    << " because it isn't a root and traversal algorithm "
+                    << alg2name[use_traversal_alg] << " only works on roots" << endl;
+            }
             return;
         }
         
@@ -306,7 +343,8 @@ pair<pair<int64_t, int64_t>, bool> Genotyper::get_snarl_reference_bounds(const S
     // position along the reference at which it occurs. Our bubble
     // goes forward in the reference, so we must come out of the
     // opposnarl end of the node from the one we have stored.
-    auto referenceIntervalStart = index.by_id.at(first_id).first + graph->get_length(graph->get_handle(snarl->start()));
+    auto referenceIntervalStart = index.by_id.at(first_id).first + graph->get_length(graph->get_handle(snarl->start().node_id(),
+        snarl->start().backward()));
 
     // The position we have stored for the end node is the first
     // position it occurs in the reference, and we know we go into
@@ -324,7 +362,8 @@ pair<pair<int64_t, int64_t>, bool> Genotyper::get_snarl_reference_bounds(const S
         // Recalculate reference positions Use the end node, which we've now
         // made first_id, to get the length offset to the start of the actual
         // internal variable bit.
-        referenceIntervalStart = index.by_id.at(first_id).first + graph->get_length(graph->get_handle(snarl->end()));
+        referenceIntervalStart = index.by_id.at(first_id).first + graph->get_length(graph->get_handle(snarl->end().node_id(),
+            snarl->end().backward()));
         referenceIntervalPastEnd = index.by_id.at(last_id).first;
     }
 
@@ -430,11 +469,16 @@ vector<SnarlTraversal> Genotyper::get_snarl_traversals(AugmentedGraph& augmented
     } else if (use_traversal_alg == TraversalAlg::Representative) {
         // representative search from vg call.  only current implementation that works for big sites
         // Now start looking for traversals of the sites.
-        read_trav_finder = unique_ptr<TraversalFinder>(new RepresentativeTraversalFinder(
+        auto* finder = new RepresentativeTraversalFinder(
             augmented_graph, manager, 1000, 1000,
-            100, [&] (const Snarl& site) -> PathIndex* {
+            100, 1, 1, [&] (const Snarl& site) -> PathIndex* {
                 return ref_path_index;
-            }));
+            });
+
+        // Since we can't sensibly handle any children, glom trivial children in.
+        finder->eat_trivial_children = true;
+
+        read_trav_finder = unique_ptr<TraversalFinder>(finder);
     } else {
         assert(false);
     }

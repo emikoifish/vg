@@ -9,7 +9,7 @@
 
 #include "hash_map.hpp"
 #include "mapper.hpp"
-#include "gssw_aligner.hpp"
+#include "aligner.hpp"
 #include "types.hpp"
 #include "multipath_alignment.hpp"
 #include "xg.hpp"
@@ -21,7 +21,11 @@
 #include "snarls.hpp"
 #include "haplotypes.hpp"
 #include "distance.hpp"
+#include "utility.hpp"
+#include "hash_graph.hpp"
+#include "annotation.hpp"
 
+#include "algorithms/topological_sort.hpp"
 #include "algorithms/extract_containing_graph.hpp"
 #include "algorithms/extract_connecting_graph.hpp"
 #include "algorithms/extract_extending_graph.hpp"
@@ -31,6 +35,9 @@
 #include "algorithms/is_single_stranded.hpp"
 #include "algorithms/split_strands.hpp"
 #include "algorithms/count_walks.hpp"
+#include "algorithms/dagify.hpp"
+#include "algorithms/reverse_complement.hpp"
+#include "algorithms/extend.hpp"
 
 #include <structures/union_find.hpp>
 #include <gbwt/gbwt.h>
@@ -40,8 +47,6 @@ using namespace haplo;
 using namespace structures;
 
 namespace vg {
-
-    
     
     class MultipathMapper : public BaseMapper  {
     public:
@@ -89,7 +94,9 @@ namespace vg {
         
         // parameters
         
+        size_t max_branch_trim_length = 1;
         int64_t max_snarl_cut_size = 5;
+        bool suppress_tail_anchors = false;
         double band_padding_multiplier = 1.0;
         size_t max_expected_dist_approx_error = 8;
         int32_t num_alt_alns = 4;
@@ -111,11 +118,17 @@ namespace vg {
         double mapq_scaling_factor = 1.0 / 4.0;
         // There must be a ScoreProvider provided, and a positive population_max_paths, if this is true
         bool use_population_mapqs = false;
+        // If this is nonzero, it takes precedence over any haplotype count
+        // available from the score provider or the XG index. If neither of
+        // those has a haplotype count, this must be set for haplotype scoring
+        // to work.
+        size_t force_haplotype_count = 0;
         // If this is set, use_population_mapqs must be set, and we will always
         // try to compute population scores, even if there is nothing to
         // disambiguate. This lets us get an accurate count of scorable reads.
         bool always_check_population = false;
         size_t population_max_paths = 10;
+        bool top_tracebacks = false;
         // Note that, like the haplotype scoring code, we work with recombiantion penalties in exponent form.
         double recombination_penalty = 20.7; // 20.7 = 9 * 2.3
         size_t rescue_only_min = 128;
@@ -128,6 +141,10 @@ namespace vg {
         bool dynamic_max_alt_alns = false;
         bool simplify_topologies = false;
         bool delay_population_scoring = false;
+        bool use_tvs_clusterer = false;
+        bool use_min_dist_clusterer = false;
+        // length of reversing walks during graph extraction
+        size_t reversing_walk_length = 0;
         
         //static size_t PRUNE_COUNTER;
         //static size_t SUBGRAPH_TOTAL;
@@ -142,7 +159,7 @@ namespace vg {
         /// actual extracted graph, a list of assigned MEMs, and the number of
         /// bases of read coverage that that MEM cluster provides (which serves
         /// as a priority).
-        using clustergraph_t = tuple<VG*, memcluster_t, size_t>;
+        using clustergraph_t = tuple<HashGraph*, memcluster_t, size_t>;
         
     protected:
         
@@ -170,7 +187,8 @@ namespace vg {
         
         
         /// After clustering MEMs, extracting graphs, and assigning hits to cluster graphs, perform
-        /// multipath alignment
+        /// multipath alignment.
+        /// Produces topologically sorted MultipathAlignments.
         void align_to_cluster_graphs(const Alignment& alignment,
                                      MappingQualityMethod mapq_method,
                                      vector<clustergraph_t>& cluster_graphs,
@@ -181,6 +199,7 @@ namespace vg {
         /// After clustering MEMs, extracting graphs, assigning hits to cluster graphs, and determining
         /// which cluster graph pairs meet the fragment length distance constraints, perform multipath
         /// alignment
+        /// Produces topologically sorted MultipathAlignments.
         void align_to_cluster_graph_pairs(const Alignment& alignment1, const Alignment& alignment2,
                                           vector<clustergraph_t>& cluster_graphs1,
                                           vector<clustergraph_t>& cluster_graphs2,
@@ -190,6 +209,7 @@ namespace vg {
         
         /// Align the read ends independently, but also try to form rescue alignments for each from
         /// the other. Return true if output obeys pair consistency and false otherwise.
+        /// Produces topologically sorted MultipathAlignments.
         bool align_to_cluster_graphs_with_rescue(const Alignment& alignment1, const Alignment& alignment2,
                                                  vector<clustergraph_t>& cluster_graphs1,
                                                  vector<clustergraph_t>& cluster_graphs2,
@@ -198,7 +218,8 @@ namespace vg {
                                                  vector<pair<pair<size_t, size_t>, int64_t>>& pair_distances,
                                                  size_t max_alt_mappings);
         
-        /// Use the rescue routine on strong suboptimal clusters to see if we can find a good secondary
+        /// Use the rescue routine on strong suboptimal clusters to see if we can find a good secondary.
+        /// Produces topologically sorted MultipathAlignments.
         void attempt_rescue_for_secondaries(const Alignment& alignment1, const Alignment& alignment2,
                                             vector<clustergraph_t>& cluster_graphs1,
                                             vector<clustergraph_t>& cluster_graphs2,
@@ -207,7 +228,8 @@ namespace vg {
                                             vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs);
         
         /// Cluster and extract subgraphs for (possibly) only one end, meant to be a non-repeat, and use them to rescue
-        /// an alignment for the other end, meant to be a repeat
+        /// an alignment for the other end, meant to be a repeat.
+        /// Produces topologically sorted MultipathAlignments.
         void attempt_rescue_of_repeat_from_non_repeat(const Alignment& alignment1, const Alignment& alignment2,
                                                       const vector<MaximalExactMatch>& mems1, const vector<MaximalExactMatch>& mems2,
                                                       bool do_repeat_rescue_from_1, bool do_repeat_rescue_from_2,
@@ -224,9 +246,18 @@ namespace vg {
                                     vector<pair<MultipathAlignment, MultipathAlignment>>& rescued_multipath_aln_pairs,
                                     vector<pair<pair<size_t, size_t>, int64_t>>& rescued_cluster_pairs) const;
         
-        /// Use the oriented distance clusterer to cluster MEMs
+        /// Use the oriented distance clusterer or the TVS clusterer to cluster MEMs depending on parameters.
+        /// If using oriented distance cluster, must alo provide an oriented distance measurer.
         vector<memcluster_t> get_clusters(const Alignment& alignment, const vector<MaximalExactMatch>& mems,
-                                          OrientedDistanceMeasurer& distance_measurer) const;
+                                          OrientedDistanceMeasurer* distance_measurer = nullptr) const;
+        
+        /// Use the oriented distance clusterer or the TVS clusterer to cluster pairs of clusters. Assumes that
+        /// the fragment length distribution has been estimated and fixed.
+        vector<pair<pair<size_t, size_t>, int64_t>> get_cluster_pairs(const Alignment& alignment1,
+                                                                      const Alignment& alignment2,
+                                                                      vector<clustergraph_t>& cluster_graphs1,
+                                                                      vector<clustergraph_t>& cluster_graphs2,
+                                                                      OrientedDistanceMeasurer* distance_measurer = nullptr);
         
         /// Extracts a subgraph around each cluster of MEMs that encompasses any
         /// graph position reachable (according to the Mapper's aligner) with
@@ -240,26 +271,32 @@ namespace vg {
                                                     const vector<memcluster_t>& clusters);
         
         /// If there are any MultipathAlignments with multiple connected components, split them
-        /// up and add them to the return vector
+        /// up and add them to the return vector.
+        /// Properly handles MultipathAlignments that are unmapped.
+        /// Does not depend on or guarantee topological order in the MultipathAlignments.
         void split_multicomponent_alignments(vector<MultipathAlignment>& multipath_alns_out,
                                              vector<size_t>* cluster_idxs = nullptr) const;
         
         /// If there are any MultipathAlignments with multiple connected components, split them
         /// up and add them to the return vector, also measure the distance between them and add
-        /// a record to the cluster pairs vector
+        /// a record to the cluster pairs vector.
+        /// Properly handles MultipathAlignments that are unmapped.
+        /// Does not depend on or guarantee topological order in the MultipathAlignments.
         void split_multicomponent_alignments(vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs_out,
                                              vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs) const;
         
         
         /// Make a multipath alignment of the read against the indicated graph and add it to
         /// the list of multimappings.
-        void multipath_align(const Alignment& alignment, VG* vg,
+        /// Does NOT necessarily produce a MultipathAlignment in topological order.
+        void multipath_align(const Alignment& alignment, const HashGraph* graph,
                              memcluster_t& graph_mems,
                              MultipathAlignment& multipath_aln_out) const;
         
         /// Removes the sections of an Alignment's path within snarls and re-aligns them with multiple traceback
-        /// to create a multipath alignment with non-trivial topology
-        void make_nontrivial_multipath_alignment(const Alignment& alignment, VG& subgraph,
+        /// to create a multipath alignment with non-trivial topology.
+        /// Guarantees that the resulting MultipathAlignment is in topological order.
+        void make_nontrivial_multipath_alignment(const Alignment& alignment, const HandleGraph& subgraph,
                                                  unordered_map<id_t, pair<id_t, bool>>& translator,
                                                  SnarlManager& snarl_manager, MultipathAlignment& multipath_aln_out) const;
         
@@ -271,12 +308,16 @@ namespace vg {
         
         /// Sorts mappings by score and store mapping quality of the optimal alignment in the MultipathAlignment object
         /// Optionally also sorts a vector of indexes to keep track of the cluster-of-origin
+        /// Allows multipath alignments where the best single path alignment is leaving the read unmapped.
+        /// MultipathAlignments MUST be topologically sorted.
         void sort_and_compute_mapping_quality(vector<MultipathAlignment>& multipath_alns, MappingQualityMethod mapq_method,
                                               vector<size_t>* cluster_idxs = nullptr) const;
         
         /// Sorts mappings by score and store mapping quality of the optimal alignment in the MultipathAlignment object
         /// If there are ties between scores, breaks them by the expected distance between pairs as computed by the
         /// OrientedDistanceClusterer::cluster_pairs function (modified cluster_pairs vector)
+        /// Allows multipath alignments where the best single path alignment is leaving the read unmapped.
+        /// MultipathAlignments MUST be topologically sorted.
         void sort_and_compute_mapping_quality(vector<pair<MultipathAlignment, MultipathAlignment>>& multipath_aln_pairs,
                                               vector<pair<pair<size_t, size_t>, int64_t>>& cluster_pairs,
                                               bool allow_population_component,
@@ -324,6 +365,7 @@ namespace vg {
         double random_match_p_value(size_t match_length, size_t read_length);
         
         /// Compute the approximate distance between two multipath alignments
+        /// If either is unmapped, or the distance cannot be obtained, returns numeric_limits<int64_t>::max()
         int64_t distance_between(const MultipathAlignment& multipath_aln_1, const MultipathAlignment& multipath_aln_2,
                                  bool full_fragment = false, bool forward_strand = false) const;
         

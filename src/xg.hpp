@@ -123,12 +123,14 @@ public:
     // Load this XG index from a stream. Throw an XGFormatError if the stream
     // does not produce a valid XG file.
     void load(istream& in);
+    // Save this XG index to a stream.
     size_t serialize(std::ostream& out,
                      sdsl::structure_tree_node* v = NULL,
-                     std::string name = "");
+                     std::string name = "") const;
     
     // If XG is not in current format, change to new format (edges in start/end format, not from/to format)
     void convert_old_edge_to_new(int_vector<>& g_iv_old, bit_vector& g_bv_old, rank_support_v<1>& g_bv_rank_old, bit_vector::select_1_type& g_bv_select_old);
+
     
     ////////////////////////////////////////////////////////////////////////////
     // Basic API
@@ -157,9 +159,6 @@ public:
     // these provide a way to get an index for each node and edge in the g_iv structure and are used by gPBWT
     size_t node_graph_idx(int64_t id) const;
     size_t edge_graph_idx(const Edge& edge) const;
-
-    int64_t get_min_id() const { return min_id; }
-    int64_t get_max_id() const { return max_id; }
 
     ////////////////////////////////////////////////////////////////////////////
     // Here is the old low-level API that needs to be restated in terms of the 
@@ -208,9 +207,7 @@ public:
     ////////////////////////////////////////////////////////////////////////////
     
     /// Look up the handle for the node with the given ID in the given orientation
-    virtual handle_t get_handle(const id_t& node_id, bool is_reverse) const;
-    // Copy over the visit version which would otherwise be shadowed.
-    using HandleGraph::get_handle;
+    virtual handle_t get_handle(const id_t& node_id, bool is_reverse = false) const;
     /// Get the ID from a handle
     virtual id_t get_id(const handle_t& handle) const;
     /// Get the orientation of a handle
@@ -225,19 +222,27 @@ public:
     /// Loop over all the handles to next/previous (right/left) nodes. Passes
     /// them to a callback which returns false to stop iterating and true to
     /// continue.
-    virtual bool follow_edges(const handle_t& handle, bool go_left, const function<bool(const handle_t&)>& iteratee) const;
+    virtual bool follow_edges_impl(const handle_t& handle, bool go_left, const function<bool(const handle_t&)>& iteratee) const;
     /// Loop over all the nodes in the graph in their local forward
     /// orientations, in their internal stored order. Stop if the iteratee returns false.
-    virtual void for_each_handle(const function<bool(const handle_t&)>& iteratee, bool parallel = false) const;
-    // Copy over the tamplate version
-    using HandleGraph::for_each_handle;
+    virtual bool for_each_handle_impl(const function<bool(const handle_t&)>& iteratee, bool parallel = false) const;
     /// Return the number of nodes in the graph
     virtual size_t node_size() const;
+    /// Get the minimum node ID used in the graph, if any are used
+    virtual id_t min_node_id() const;
+    /// Get the maximum node ID used in the graph, if any are used
+    virtual id_t max_node_id() const;
+    
+    // TODO: There's currently no really good efficient way to implement
+    // get_degree; we have to decode each edge to work out what node side it is
+    // on. So we use the default implementation.
     
     ////////////////////////
     // Path handle graph API
     ////////////////////////
-    
+   
+    /// Determine if a path with a given name exists
+    virtual bool has_path(const string& path_name) const;
     /// Look up the path handle for the given path name
     virtual path_handle_t get_path_handle(const string& path_name) const;
     /// Look up the name of a path from a handle to it
@@ -249,7 +254,7 @@ public:
     /// Returns the number of paths stored in the graph
     virtual size_t get_path_count() const;
     /// Execute a function on each path in the graph
-    virtual void for_each_path_handle(const function<void(const path_handle_t&)>& iteratee) const;
+    virtual bool for_each_path_handle_impl(const function<bool(const path_handle_t&)>& iteratee) const;
     /// Get a node handle (node ID and orientation) from a handle to an occurrence on a path
     virtual handle_t get_occurrence(const occurrence_handle_t& occurrence_handle) const;
     /// Get a handle to the first occurrence in a path
@@ -266,9 +271,8 @@ public:
     virtual occurrence_handle_t get_previous_occurrence(const occurrence_handle_t& occurrence_handle) const;
     /// Returns a handle to the path that an occurrence is on
     virtual path_handle_t get_path_handle_of_occurrence(const occurrence_handle_t& occurrence_handle) const;
-    /// Returns the 0-based ordinal rank of a occurrence on a pth
-    virtual size_t get_ordinal_rank_of_occurrence(const occurrence_handle_t& occurrence_handle) const;
-    
+    /// Executes a function on each occurrence of a handle in any path.
+    virtual bool for_each_occurrence_on_handle_impl(const handle_t& handle, const function<bool(const occurrence_handle_t&)>& iteratee) const;
     
     ////////////////////////////////////////////////////////////////////////////
     // Higher-level graph API
@@ -276,7 +280,7 @@ public:
     
     // use_steps flag toggles whether dist refers to steps or length in base pairs
     void neighborhood(int64_t id, size_t dist, Graph& g, bool use_steps = true) const;
-    void for_path_range(const string& name, int64_t start, int64_t stop, function<void(int64_t node_id)> lambda, bool is_rev = false) const;
+    void for_path_range(const string& name, int64_t start, int64_t stop, function<void(int64_t node_id, bool rev)> lambda, bool is_rev = false) const;
     void get_path_range(const string& name, int64_t start, int64_t stop, Graph& g, bool is_rev = false) const;
     // basic method to query regions of the graph
     // add_paths flag allows turning off the (potentially costly, and thread-locking) addition of paths
@@ -342,8 +346,16 @@ public:
     vector<size_t> position_in_path(int64_t id, const string& name) const;
     vector<size_t> position_in_path(int64_t id, size_t rank) const;
     map<string, vector<size_t> > position_in_paths(int64_t id, bool is_rev = false, size_t offset = 0) const;
+    
+    /// Return a mapping from path name to all positions along each path at
+    /// which the given pos_t occurs.
     map<string, vector<pair<size_t, bool> > > offsets_in_paths(pos_t pos) const;
+    
+    /// Return, for the nearest position in a path to the given position,
+    /// subject to the given max search distance, a mapping from path name to
+    /// all positions on each path where that pos_t occurs.
     map<string, vector<pair<size_t, bool> > > nearest_offsets_in_paths(pos_t pos, int64_t max_search) const;
+    
     map<string, vector<size_t> > distance_in_paths(int64_t id1, bool is_rev1, size_t offset1,
                                                    int64_t id2, bool is_rev2, size_t offset2) const;
     int64_t min_distance_in_paths(int64_t id1, bool is_rev1, size_t offset1,
@@ -663,6 +675,13 @@ private:
     // And some masks
     const static size_t HIGH_BIT = (size_t)1 << 63;
     const static size_t LOW_BITS = 0x7FFFFFFFFFFFFFFF;
+
+    /// This is a utility function for the edge exploration. It says whether we
+    /// want to visit an edge depending on its type, whether we're the to or
+    /// from node, whether we want to look left or right, and whether we're
+    /// forward or reverse on the node.
+    bool edge_filter(int type, bool is_to, bool want_left, bool is_reverse) const;
+
     
     // This loops over the given number of edge records for the given g node,
     // starting at the given start g vector position. For all the edges that are
@@ -902,7 +921,8 @@ Mapping new_mapping(const string& name, int64_t id, size_t rank, bool is_reverse
 void to_text(ostream& out, Graph& graph);
 
 // Serialize a rank_select_int_vector in an SDSL serialization compatible way. Returns the number of bytes written.
-//size_t serialize(XG::rank_select_int_vector& to_serialize, ostream& out,
+
+//size_t serialize(const XG::rank_select_int_vector& to_serialize, ostream& out,
 //    sdsl::structure_tree_node* parent, const std::string name);
 
 // Deserialize a rank_select_int_vector in an SDSL serialization compatible way.

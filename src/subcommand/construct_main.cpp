@@ -7,7 +7,7 @@
 
 #include "subcommand.hpp"
 
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
 #include "../constructor.hpp"
 #include "../msa_converter.hpp"
 #include "../region.hpp"
@@ -24,6 +24,7 @@ void help_construct(char** argv) {
          << "    -v, --vcf FILE         input VCF (may repeat)" << endl
          << "    -n, --rename V=F       rename contig V in the VCFs to contig F in the FASTAs (may repeat)" << endl
          << "    -a, --alt-paths        save paths for alts of variants by variant ID" << endl
+         << "    -N, --alt-named-paths  use VCF IDs instead of _alt_+hashes for alt paths. results *not* indexed as GBWT threads" << endl
          << "    -R, --region REGION    specify a particular chromosome or 1-based inclusive region" << endl
          << "    -C, --region-is-chrom  don't attempt to parse the region (use when the reference" << endl
          << "                           sequence name could be inadvertently parsed as a region)" << endl
@@ -33,12 +34,13 @@ void help_construct(char** argv) {
          << "    -I, --insertions FILE  a FASTA file containing insertion sequences "<< endl
          << "                           (referred to in VCF) to add to graph." << endl
          << "    -f, --flat-alts N      don't chop up alternate alleles from input VCF" << endl
+         << "    -i, --no-trim-indels   don't remove the 1bp reference base from alt alleles of indels." << endl
          << "construct from a multiple sequence alignment:" << endl
          << "    -M, --msa FILE         input multiple sequence alignment" << endl
-         << "    -F, --msa-format       format of the MSA file (options: fasta, maf, clustal; default fasta)" << endl
+         << "    -F, --msa-format       format of the MSA file (options: fasta, clustal; default fasta)" << endl
          << "    -d, --drop-msa-paths   don't add paths for the MSA sequences into the graph" << endl
          << "shared construction options:" << endl
-         << "    -m, --node-max N       limit the maximum allowable node sequence size (defaults to 1000)" << endl
+         << "    -m, --node-max N       limit the maximum allowable node sequence size (defaults to 32)" << endl
          << "                           nodes greater than this threshold will be divided" << endl
          << "                           Note: nodes larger than ~1024 bp can't be GCSA2-indexed" << endl
          << "    -p, --progress         show progress" << endl;
@@ -62,7 +64,7 @@ int main_construct(int argc, char** argv) {
     string region;
     bool region_is_chrom = false;
     string msa_filename;
-    int max_node_size = 1000;
+    int max_node_size = 32;
     bool keep_paths = true;
     string msa_format = "fasta";
     bool show_progress = false;
@@ -81,6 +83,7 @@ int main_construct(int argc, char** argv) {
                 {"drop-msa-paths", no_argument, 0, 'd'},
                 {"rename", required_argument, 0, 'n'},
                 {"alt-paths", no_argument, 0, 'a'},
+                {"alt-named-paths", no_argument, 0, 'N'},
                 {"handle-sv", no_argument, 0, 'S'},
                 {"insertions", required_argument, 0, 'I'},
                 {"progress",  no_argument, 0, 'p'},
@@ -90,11 +93,12 @@ int main_construct(int argc, char** argv) {
                 {"region-is-chrom", no_argument, 0, 'C'},
                 {"node-max", required_argument, 0, 'm'},\
                 {"flat-alts", no_argument, 0, 'f'},
+                {"no-trim-indels", no_argument, 0, 'i'},
                 {0, 0, 0, 0}
             };
 
         int option_index = 0;
-        c = getopt_long (argc, argv, "v:r:n:ph?z:t:R:m:as:CfSI:M:dF:",
+        c = getopt_long (argc, argv, "v:r:n:ph?z:t:R:m:aNs:CfSI:M:dF:i",
                          long_options, &option_index);
 
         /* Detect the end of the options. */
@@ -117,6 +121,10 @@ int main_construct(int argc, char** argv) {
             
         case 'd':
             keep_paths = false;
+            break;
+
+        case 'i':
+            constructor.trim_indels = false;
             break;
 
         case 'r':
@@ -153,6 +161,12 @@ int main_construct(int argc, char** argv) {
             constructor.alt_paths = true;
             break;
 
+        case 'N':
+            constructor.alt_paths = true;
+            constructor.alt_names_from_vcf_id = true;
+            constructor.alt_path_prefix = "";
+            break;
+            
         case 'p':
             show_progress = true;
             break;
@@ -209,8 +223,19 @@ int main_construct(int argc, char** argv) {
         // Actually use the Constructor.
         // TODO: If we aren't always going to use the Constructor, refactor the subcommand to not always create and configure it.
 
+        // Make an emitter that serializes the actual Graph objects, with buffering.
+        // But just serialize one graph at a time in each group.
+        stream::ProtobufEmitter<Graph> emitter(cout, 1);
+
         // We need a callback to handle pieces of graph as they are produced.
         auto callback = [&](Graph& big_chunk) {
+            // Sort the nodes by ID so that the serialized chunks come out in sorted order
+            // TODO: We still interleave chunks from different threads working on different contigs
+            std::sort(big_chunk.mutable_node()->begin(), big_chunk.mutable_node()->end(), [](const Node& a, const Node& b) -> bool {
+                // Return true if a comes before b
+                return a.id() < b.id();
+            });
+        
             // Wrap the chunk in a vg object that can properly divide it into
             // reasonably sized serialized chunks.
             VG* g = new VG(big_chunk, false, true);
@@ -218,8 +243,9 @@ int main_construct(int argc, char** argv) {
             // Check our work. Never output an invalid graph.
             // But allow for edges where one node isn't there, because we need those to connect segments.
             assert(g->is_valid(true, false, true, true));
-#pragma omp critical (cout)
-            g->serialize_to_ostream_as_part(cout);
+            // One thread at a time can write to the emitter and the output stream
+#pragma omp critical (emitter)
+            g->serialize_to_emitter(emitter);
         };
         
         // Copy shared parameters into the constructor
@@ -329,9 +355,8 @@ int main_construct(int argc, char** argv) {
         constructor.construct_graph(fasta_pointers, vcf_pointers,
                                     ins_pointers, callback);
                                     
-        // Now all the graph chunks are written out.
-        // Add an EOF marker
-        stream::finish(cout);
+        // The output will be flushed when the ProtobufEmitter we use in the callback goes away.
+        // Don't add an extra EOF marker or anything.
         
         // NB: If you worry about "still reachable but possibly lost" warnings in valgrind,
         // this would free all the memory used by protobuf:

@@ -9,6 +9,12 @@
 #include <iostream>
 #include <sstream>
 
+// If the VG_GIT_VERSION deosn't exist at all, define a placeholder
+// This lets us be somewhat robust to undeterminable versions
+#ifndef VG_GIT_VERSION
+    #define VG_GIT_VERSION "not-from-git"
+#endif
+
 namespace vg {
 
 using namespace std;
@@ -26,7 +32,17 @@ const unordered_map<string, string> Version::codenames = {
     {"v1.8.0", "Vallata"},
     {"v1.9.0", "Miglionico"},
     {"v1.10.0", "Rionero"},
-    {"v1.11.0", "Cairano"}
+    {"v1.11.0", "Cairano"},
+    {"v1.12.0", "Parolise"},
+    {"v1.12.1", "Parolise"},
+    {"v1.13.0", "Moschiano"},
+    {"v1.14.0", "Quadrelle"},
+    {"v1.15.0", "Tufo"},
+    {"v1.16.0", "Rotondi"},
+    {"v1.17.0", "Candida"},
+    {"v1.18.0", "Zungoli"},
+    {"v1.19.0", "Tramutola"},
+    {"v1.20.0", "Ginestra"}
     // Add more codenames here
 };
 

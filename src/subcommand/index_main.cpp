@@ -12,17 +12,19 @@
 
 #include "../vg.hpp"
 #include "../index.hpp"
-#include "../gam_index.hpp"
-#include "../stream.hpp"
+#include "../stream/stream.hpp"
+#include "../stream/vpkg.hpp"
+#include "../stream_index.hpp"
 #include "../vg_set.hpp"
 #include "../utility.hpp"
 #include "../region.hpp"
 #include "../snarls.hpp"
 #include "../distance.hpp"
+#include "../source_sink_overlay.hpp"
+#include "../gbwt_helper.hpp"
 
 #include <gcsa/gcsa.h>
 #include <gcsa/algorithms.h>
-#include <gbwt/dynamic_gbwt.h>
 #include <gbwt/variants.h>
 
 using namespace std;
@@ -38,10 +40,11 @@ void help_index(char** argv) {
          << "    -t, --threads N        number of threads to use" << endl
          << "    -p, --progress         show progress" << endl
          << "xg options:" << endl
-         << "    -x, --xg-name FILE     use this file to store a succinct, queryable version of the graph(s)" << endl
+         << "    -x, --xg-name FILE     use this file to store a succinct, queryable version of the graph(s), or read for GCSA indexing" << endl
          << "    -F, --thread-db FILE   read thread database from FILE (may repeat)" << endl
          << "gbwt options:" << endl
          << "    -v, --vcf-phasing FILE generate threads from the haplotypes in the VCF file FILE" << endl
+         << "    -W, --ignore-missing   don't warn when variants in the VCF are missing from the graph; silently skip them" << endl
          << "    -e, --parse-only FILE  store the VCF parsing with prefix FILE without generating threads" << endl
          << "    -T, --store-threads    generate threads from the embedded paths" << endl
          << "    -M, --store-gam FILE   generate threads from the alignments in FILE (many allowed)" << endl
@@ -58,7 +61,7 @@ void help_index(char** argv) {
          << "    -I, --region C:S-E     operate on only the given 1-based region of the given VCF contig (may repeat)" << endl
          << "    -E, --exclude SAMPLE   exclude any samples with the given name from haplotype indexing" << endl
          << "gcsa options:" << endl
-         << "    -g, --gcsa-out FILE    output a GCSA2 index instead of a rocksdb index" << endl
+         << "    -g, --gcsa-out FILE    output a GCSA2 index to the given file" << endl
          << "    -i, --dbg-in FILE      use kmers from FILE instead of input VG (may repeat)" << endl
          << "    -f, --mapping FILE     use this node mapping in GCSA2 construction" << endl
          << "    -k, --kmer-size N      index kmers of size N in the graph (default " << gcsa::Key::MAX_LENGTH << ")" << endl
@@ -67,6 +70,8 @@ void help_index(char** argv) {
          << "    -V, --verify-index     validate the GCSA2 index using the input kmers (important for testing)" << endl
          << "gam indexing options:" << endl
          << "    -l, --index-sorted-gam input is sorted .gam format alignments, store a GAI index of the sorted GAM in INPUT.gam.gai" << endl
+         << "vg in-place indexing options:" << endl
+         << "    --index-sorted-vg      input is ID-sorted .vg format graph chunks, store a VGI index of the sorted vg in INPUT.vg.vgi" << endl
          << "rocksdb options:" << endl
          << "    -d, --db-name  <X>     store the RocksDB index in <X>" << endl
          << "    -m, --store-mappings   input is .gam format, store the mappings in alignments by node" << endl
@@ -77,22 +82,16 @@ void help_index(char** argv) {
          << "    -D, --dump             print the contents of the db to stdout" << endl
          << "    -C, --compact          compact the index into a single level (improves performance)" << endl
          << "snarl distance index options" << endl
-         << "    -c  --dist-graph FILE  generate snarl distane index from VG in FILE" << endl
          << "    -s  --snarl-name FILE  load snarls from FILE" << endl
-         << "    -j  --dist-name FILE   use this file to store a snarl-based distance index" << endl;
+         << "    -j  --dist-name FILE   use this file to store a snarl-based distance index" << endl
+         << "    -w  --max_dist N   cap beyond which the maximum distance is no longer accurate" << endl;
 }
-
-// Convert gbwt::node_type to ThreadMapping.
-//xg::XG::ThreadMapping gbwt_to_thread_mapping(gbwt::node_type node) {
-//    xg::XG::ThreadMapping thread_mapping = { (int64_t)(gbwt::Node::id(node)), gbwt::Node::is_reverse(node) };
-//    return thread_mapping;
-//}
 
 // Convert Path to a GBWT path.
 gbwt::vector_type path_to_gbwt(const Path& path) {
     gbwt::vector_type result(path.mapping_size());
     for (size_t i = 0; i < result.size(); i++) {
-        result[i] = gbwt::Node::encode(path.mapping(i).position().node_id(), path.mapping(i).position().is_reverse());
+        result[i] = mapping_to_gbwt(path.mapping(i));
     }
     return result;
 }
@@ -106,6 +105,11 @@ gbwt::vector_type predecessors(const xg::XG& xg_index, const Path& path) {
 
     vg::id_t first_node = path.mapping(0).position().node_id();
     bool is_reverse = path.mapping(0).position().is_reverse();
+    
+#ifdef debug
+    cerr << "Look for predecessors of node " << first_node << " " << is_reverse << " which is first in alt path" << endl;
+#endif
+    
     auto pred_edges = (is_reverse ? xg_index.edges_on_end(first_node) : xg_index.edges_on_start(first_node));
     for (auto& edge : pred_edges) {
         if (edge.from() == edge.to()) {
@@ -135,11 +139,13 @@ int main_index(int argc, char** argv) {
         return 1;
     }
 
+    #define OPT_BUILD_VGI_INDEX 1000
+
     // Which indexes to build.
     bool build_xg = false, build_gbwt = false, write_threads = false, build_gpbwt = false, build_gcsa = false, build_rocksdb = false, build_dist = false;
 
     // Files we should read.
-    string vcf_name, mapping_name, dist_graph;
+    string vcf_name, mapping_name;
     vector<string> thread_db_names;
     vector<string> dbg_names;
 
@@ -150,6 +156,9 @@ int main_index(int argc, char** argv) {
     bool show_progress = false;
 
     // GBWT
+    bool warn_on_missing_variants = true;
+    size_t found_missing_variants = 0; // Track the number of variants in the phasing VCF that aren't found in the graph
+    size_t max_missing_variant_warnings = 10; // Only report up to this many of them
     bool index_haplotypes = false, index_paths = false, index_gam = false;
     bool parse_only = false;
     vector<string> gam_file_names;
@@ -168,7 +177,10 @@ int main_index(int argc, char** argv) {
     bool verify_gcsa = false;
     
     // Gam index (GAI)
-    bool build_gam_index = false;
+    bool build_gai_index = false;
+    
+    // VG in-place index (VGI)
+    bool build_vgi_index = false;
 
     // RocksDB
     bool dump_index = false;
@@ -176,6 +188,9 @@ int main_index(int argc, char** argv) {
     bool store_node_alignments = false;
     bool store_mappings = false;
     bool dump_alignments = false;
+
+    //Distance index
+    int cap = -1;
 
     // Unused?
     bool compact = false;
@@ -196,6 +211,7 @@ int main_index(int argc, char** argv) {
 
             // GBWT
             {"vcf-phasing", required_argument, 0, 'v'},
+            {"ignore-missing", no_argument, 0, 'W'},
             {"parse-only", required_argument, 0, 'e'},
             {"store-threads", no_argument, 0, 'T'},
             {"store-gam", required_argument, 0, 'M'},
@@ -212,7 +228,7 @@ int main_index(int argc, char** argv) {
             {"exclude", required_argument, 0, 'E'},
 
             // GCSA
-            {"gcsa-name", required_argument, 0, 'g'},
+            {"gcsa-out", required_argument, 0, 'g'},
             {"dbg-in", required_argument, 0, 'i'},
             {"mapping", required_argument, 0, 'f'},
             {"kmer-size", required_argument, 0, 'k'},
@@ -222,6 +238,9 @@ int main_index(int argc, char** argv) {
             
             // GAM index (GAI)
             {"index-sorted-gam", no_argument, 0, 'l'},
+            
+            // VG in-place index (VGI)
+            {"index-sorted-vg", no_argument, 0, OPT_BUILD_VGI_INDEX},
 
             // RocksDB
             {"db-name", required_argument, 0, 'd'},
@@ -233,14 +252,14 @@ int main_index(int argc, char** argv) {
             {"compact", no_argument, 0, 'C'},
 
             //Snarl distance index
-            {"dist-graph", required_argument, 0, 'c'},
             {"snarl-name", required_argument, 0, 's'},
             {"dist-name", required_argument, 0, 'j'},
+            {"max-dist", required_argument, 0, 'w'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
-        c = getopt_long (argc, argv, "b:t:px:F:v:e:TM:G:H:PoB:u:n:R:r:I:E:g:i:f:k:X:Z:Vld:maANDCc:s:j:h",
+        c = getopt_long (argc, argv, "b:t:px:F:v:We:TM:G:H:PoB:u:n:R:r:I:E:g:i:f:k:X:Z:Vld:maANDCs:j:w:h",
                 long_options, &option_index);
 
         // Detect the end of the options.
@@ -274,6 +293,9 @@ int main_index(int argc, char** argv) {
             index_haplotypes = true;
             build_xg = true;
             vcf_name = optarg;
+            break;
+        case 'W':
+            warn_on_missing_variants = false;
             break;
         case 'e':
             parse_only = true;
@@ -386,7 +408,12 @@ int main_index(int argc, char** argv) {
             
         // Gam index (GAI)
         case 'l':
-            build_gam_index = true;
+            build_gai_index = true;
+            break;
+            
+        // VGI index
+        case OPT_BUILD_VGI_INDEX:
+            build_vgi_index = true;
             break;
 
         // RocksDB
@@ -415,10 +442,6 @@ int main_index(int argc, char** argv) {
             break;
 
         //Snarl distance index
-        case 'c':
-            build_dist = true;
-            dist_graph = optarg;
-            break;
         case 's':
             build_dist = true;
             snarl_name = optarg;
@@ -426,6 +449,10 @@ int main_index(int argc, char** argv) {
         case 'j':
             build_dist = true;
             dist_name = optarg;
+            break;
+        case 'w':
+            build_dist = true;
+            cap = parse<int>(optarg);
             break;
 
         case 'h':
@@ -444,7 +471,8 @@ int main_index(int argc, char** argv) {
         file_names.push_back(file_name);
     }
 
-    if (xg_name.empty() && gbwt_name.empty() && parse_name.empty() && threads_name.empty() && gcsa_name.empty() && rocksdb_name.empty() && !build_gam_index && dist_graph.empty() ) {
+    if (xg_name.empty() && gbwt_name.empty() && parse_name.empty() && threads_name.empty() &&
+        gcsa_name.empty() && rocksdb_name.empty() && !build_gai_index && !build_vgi_index && dist_name.empty() ) {
         cerr << "error: [vg index] index type not specified" << endl;
         return 1;
     }
@@ -464,8 +492,18 @@ int main_index(int argc, char** argv) {
         //return 1;
     }
     
-    if (file_names.size() != 1 && build_gam_index) {
+    if (file_names.size() != 1 && build_gai_index) {
         cerr << "error: [vg index] can only index exactly one sorted GAM file at a time" << endl;
+        return 1;
+    }
+    
+    if (file_names.size() != 1 && build_vgi_index) {
+        cerr << "error: [vg index] can only index exactly one sorted VG file at a time" << endl;
+        return 1;
+    }
+    
+    if (file_names.size() != 1 && build_dist) {
+        cerr << "error: [vg index] can only create one distance index at a time" << endl;
         return 1;
     }
     
@@ -477,6 +515,12 @@ int main_index(int argc, char** argv) {
     if ((build_gbwt || write_threads) && thread_db_names.size() > 1) {
         cerr << "error: [vg index] cannot use multiple thread database files with -G or -H" << endl;
         return 1;
+    }
+    
+    if (build_xg && build_gcsa && file_names.empty()) {
+        // Really we want to build a GCSA by *reading* and XG
+        build_xg = false;
+        // We'll continue in the build_gcsa section
     }
 
     // Build XG
@@ -496,11 +540,18 @@ int main_index(int argc, char** argv) {
         }
     }
 
+#ifdef debug
+    cerr << "Alt paths:" << endl;
+    for (auto& kv : alt_paths) {
+        cerr << kv.first << ": " << kv.second.mapping_size() << " entries" << endl;
+    }
+#endif
+
     // Generate threads
     if (index_haplotypes || index_paths || index_gam) {
 
         if (!build_gbwt && !(parse_only && index_haplotypes) && !write_threads && !build_gpbwt) {
-            cerr << "error: [vg index] No output format specified for the threads" << endl;
+            cerr << "error: [vg index] no output format specified for the threads" << endl;
             return 1;
         }
 
@@ -510,7 +561,7 @@ int main_index(int argc, char** argv) {
         // if we already made the xg index we can determine the
         size_t id_width;
         if (!index_gam) {
-            id_width = gbwt::bit_length(gbwt::Node::encode(xg_index->get_max_id(), true));
+            id_width = gbwt::bit_length(gbwt::Node::encode(xg_index->max_node_id(), true));
         } else { // indexing a GAM
             if (show_progress) {
                 cerr << "Finding maximum node id in GAM..." << endl;
@@ -534,9 +585,10 @@ int main_index(int argc, char** argv) {
             cerr << "Node id width: " << id_width << endl;
         }
 
+        // GBWT metadata.
         vector<string> thread_names;                // Store thread names in insertion order.
 //        vector<xg::XG::thread_t> all_phase_threads; // Store all threads if building gPBWT.
-        size_t haplotype_count = 0;
+        size_t sample_count = 0, haplotype_count = 0, contig_count = 0;
 
         // Do we build GBWT?
         gbwt::GBWTBuilder* gbwt_builder = 0;
@@ -585,7 +637,7 @@ int main_index(int argc, char** argv) {
                 }
                 gbwt::vector_type buffer(path.ids.size());
                 for (size_t i = 0; i < path.ids.size(); i++) {
-                    buffer[i] = gbwt::Node::encode(path.node(i), path.is_reverse(i));
+                    buffer[i] = xg_path_to_gbwt(path, i);
                 }
                 store_thread(buffer, xg_index->path_name(path_rank));
             }
@@ -599,7 +651,7 @@ int main_index(int argc, char** argv) {
             function<void(Alignment&)> lambda = [&](Alignment& aln) {
                 gbwt::vector_type buffer;
                 for (auto& m : aln.path().mapping()) {
-                    buffer.push_back(gbwt::Node::encode(m.position().node_id(), m.position().is_reverse()));
+                    buffer.push_back(mapping_to_gbwt(m));
                 }
                 store_thread(buffer, aln.name());
                 haplotype_count++;
@@ -613,6 +665,7 @@ int main_index(int argc, char** argv) {
 
         // Generate haplotypes
         if (index_haplotypes) {
+            size_t total_variants_processed = 0;
             vcflib::VariantCallFile variant_file;
             variant_file.parseSamples = false; // vcflib parsing is very slow if there are many samples.
             variant_file.open(vcf_name);
@@ -628,7 +681,7 @@ int main_index(int argc, char** argv) {
             // How many samples are there?
             size_t num_samples = variant_file.sampleNames.size();
             if (num_samples == 0) {
-                cerr << "error: [vg index] The variant file does not contain phasings" << endl;
+                cerr << "error: [vg index] the variant file does not contain phasings" << endl;
                 return 1;
             }
 
@@ -637,6 +690,7 @@ int main_index(int argc, char** argv) {
 
             // Determine the range of samples.
             sample_range.second = std::min(sample_range.second, num_samples);
+            sample_count += sample_range.second - sample_range.first;
             haplotype_count += 2 * (sample_range.second - sample_range.first);  // Assuming a diploid genome
             if (show_progress) {
                 cerr << "Haplotype generation parameters:" << endl;
@@ -659,6 +713,7 @@ int main_index(int argc, char** argv) {
                     cerr << "Processing path " << path_name << " as VCF contig " << vcf_contig_name << endl;
                 }
                 string parse_file = parse_name + '_' + vcf_contig_name;
+                contig_count++;
 
                 // Structures to parse the VCF file into.
                 const xg::XGPath& path = xg_index->get_path(path_name);
@@ -667,7 +722,7 @@ int main_index(int argc, char** argv) {
 
                 // Add the reference to VariantPaths.
                 for (size_t i = 0; i < path.ids.size(); i++) {
-                    variants.appendToReference(gbwt::Node::encode(path.node(i), path.is_reverse(i)));
+                    variants.appendToReference(xg_path_to_gbwt(path, i));
                 }
                 variants.indexReference();
 
@@ -720,11 +775,12 @@ int main_index(int argc, char** argv) {
                         ref_path = path_to_gbwt(ref_path_iter->second);
                         ref_pos = variants.firstOccurrence(ref_path.front());
                         if (ref_pos == variants.invalid_position()) {
-                            cerr << "warning: [vg index] Invalid ref path for " << var_name << " at "
+                            cerr << "warning: [vg index] invalid ref path for " << var_name << " at "
                                  << var.sequenceName << ":" << var.position << endl;
                             continue;
                         }
-                    } else { // Try using alt paths instead.
+                    } else {
+                        // Try using alt paths instead.
                         bool found = false;
                         for (size_t alt_index = 1; alt_index < var.alleles.size(); alt_index++) {
                             std::string alt_path_name = "_alt_" + var_name + "_" + to_string(alt_index);
@@ -736,6 +792,10 @@ int main_index(int argc, char** argv) {
                                 for (auto node : pred_nodes) {
                                     size_t pred_pos = variants.firstOccurrence(node);
                                     if (pred_pos != variants.invalid_position()) {
+#ifdef debug
+                                        cerr << "Found predecessor node " << gbwt::Node::id(node) << " " << gbwt::Node::is_reverse(node)
+                                            << " occurring at valid pos " << pred_pos << endl;
+#endif
                                         candidate_pos = std::max(candidate_pos, pred_pos + 1);
                                         candidate_found = true;
                                         found = true;
@@ -750,9 +810,23 @@ int main_index(int argc, char** argv) {
                             }
                         }
                         if (!found) {
-                            cerr << "warning: [vg index] Alt and ref paths for " << var_name
-                                 << " at " << var.sequenceName << ":" << var.position
-                                 << " missing/empty! Was the variant skipped during construction?" << endl;
+                            // This variant from the VCF is just not in the graph
+
+                            found_missing_variants++;
+
+                            if (warn_on_missing_variants) {
+                                if (found_missing_variants <= max_missing_variant_warnings) {
+                                    // The user might not know it. Warn them in case they mixed up their VCFs.
+                                    cerr << "warning: [vg index] alt and ref paths for " << var_name
+                                         << " at " << var.sequenceName << ":" << var.position
+                                         << " missing/empty! Was the variant skipped during construction?" << endl;
+                                    if (found_missing_variants == max_missing_variant_warnings) {
+                                        cerr << "warning: [vg index] suppressing further missing variant warnings" << endl;
+                                    }
+                                }
+                            }
+
+                            // Skip this variant and move on to the next as if it never appeared.
                             continue;
                         }
                     }
@@ -813,7 +887,10 @@ int main_index(int argc, char** argv) {
 
                 // Save the VCF parse or generate the haplotypes.
                 if (parse_only) {
-                    sdsl::store_to_file(variants, parse_file);
+                    if (!sdsl::store_to_file(variants, parse_file)) {
+                        cerr << "error: [vg index] cannot write parse file " << parse_file << endl;
+                        return 1;
+                    }
                 } else {
                     for (size_t batch = 0; batch < phasings.size(); batch++) {
                         gbwt::generateHaplotypes(variants, phasings[batch],
@@ -836,9 +913,18 @@ int main_index(int argc, char** argv) {
                         }
                     }
                 } // End of haplotype generation for the current contig.
+            
+                // Record the number of variants we saw on this contig
+                total_variants_processed += variants_processed;
+            
             } // End of contigs.
+            
+            if (warn_on_missing_variants && found_missing_variants > 0) {
+                cerr << "warning: [vg index] Found " << found_missing_variants << "/" << total_variants_processed
+                    << " variants in phasing VCF but not in graph! Do your graph and VCF match?" << endl;
+            }
         } // End of haplotypes.
-
+        
         // Store the thread database. Write it to disk if a filename is given,
         // or store it in the XG index if building gPBWT or if the XG index
         // will be written to disk.
@@ -846,8 +932,18 @@ int main_index(int argc, char** argv) {
         if (!parse_only) {
             if (build_gbwt) {
                 gbwt_builder->finish();
-                if (show_progress) { cerr << "Saving GBWT to disk..." << endl; }
-                sdsl::store_to_file(gbwt_builder->index, gbwt_name);
+                gbwt_builder->index.addMetadata();
+                gbwt_builder->index.metadata.setSamples(sample_count);
+                gbwt_builder->index.metadata.setHaplotypes(haplotype_count);
+                gbwt_builder->index.metadata.setContigs(contig_count);
+                if (show_progress) {
+                    cerr << "GBWT metadata: "; gbwt::operator<<(cerr, gbwt_builder->index.metadata); cerr << endl;
+                    cerr << "Saving GBWT to disk..." << endl;
+                }
+                
+                // Save encapsulated in a VPKG
+                stream::VPKG::save(gbwt_builder->index, gbwt_name);
+                
                 delete gbwt_builder; gbwt_builder = nullptr;
             }
             if (write_threads) {
@@ -876,7 +972,7 @@ int main_index(int argc, char** argv) {
     } // End of thread indexing.
 
     // Save XG
-    if (!xg_name.empty()) {
+    if (build_xg && !xg_name.empty()) {
         if (!thread_db_names.empty()) {
             vector<string> thread_names;
             size_t haplotype_count = 0;
@@ -893,9 +989,8 @@ int main_index(int argc, char** argv) {
         if (show_progress) {
             cerr << "Saving XG index to disk..." << endl;
         }
-        ofstream db_out(xg_name);
-        xg_index->serialize(db_out);
-        db_out.close();
+        // Save encapsulated in a VPKG
+        stream::VPKG::save(*xg_index, xg_name); 
     }
     delete xg_index; xg_index = nullptr;
 
@@ -918,12 +1013,43 @@ int main_index(int argc, char** argv) {
             if (show_progress) {
                 cerr << "Generating kmer files..." << endl;
             }
-            VGset graphs(file_names);
-            graphs.show_progress = show_progress;
-            size_t kmer_bytes = params.getLimitBytes();
-            dbg_names = graphs.write_gcsa_kmers_binary(kmer_size, kmer_bytes);
-            params.reduceLimit(kmer_bytes);
-            delete_kmer_files = true;
+            
+            if (!file_names.empty()) {
+                // Get the kmers from a VGset.
+                VGset graphs(file_names);
+                graphs.show_progress = show_progress;
+                size_t kmer_bytes = params.getLimitBytes();
+                dbg_names = graphs.write_gcsa_kmers_binary(kmer_size, kmer_bytes);
+                params.reduceLimit(kmer_bytes);
+                delete_kmer_files = true;
+            } else if (!xg_name.empty()) {
+                // Get the kmers from an XG
+                
+                get_input_file(xg_name, [&](istream& xg_stream) {
+                    // Load the XG
+                    auto xg = stream::VPKG::load_one<xg::XG>(xg_stream);
+                
+                    // Make an overlay on it to add source and sink nodes
+                    // TODO: Don't use this directly; unify this code with VGset's code.
+                    SourceSinkOverlay overlay(xg.get(), kmer_size);
+                    
+                    // Get the size limit
+                    size_t kmer_bytes = params.getLimitBytes();
+                    
+                    // Write just the one kmer temp file
+                    dbg_names.push_back(write_gcsa_kmers_to_tmpfile(overlay, kmer_size, kmer_bytes,
+                        overlay.get_id(overlay.get_source_handle()),
+                        overlay.get_id(overlay.get_sink_handle())));
+                        
+                    // Feed back into the size limit
+                    params.reduceLimit(kmer_bytes);
+                    delete_kmer_files = true;
+                
+                });
+            } else {
+                cerr << "error: [vg index] cannot generate GCSA index without either a vg or an xg" << endl;
+                exit(1);
+            }
         }
 
         // Build the index
@@ -945,8 +1071,8 @@ int main_index(int argc, char** argv) {
         if (show_progress) {
             cerr << "Saving the index to disk..." << endl;
         }
-        sdsl::store_to_file(gcsa_index, gcsa_name);
-        sdsl::store_to_file(lcp_array, gcsa_name + ".lcp");
+        stream::VPKG::save(gcsa_index, gcsa_name);
+        stream::VPKG::save(lcp_array, gcsa_name + ".lcp");
 
         // Verify the index
         if (verify_gcsa) {
@@ -966,16 +1092,15 @@ int main_index(int argc, char** argv) {
         }
     }
     
-    if (build_gam_index) {
+    if (build_gai_index) {
         // Index a sorted GAM file.
-        GAMIndex index;
         
         get_input_file(file_names.at(0), [&](istream& in) {
             // Grab the input GAM stream and wrap it in a cursor
             stream::ProtobufIterator<Alignment> cursor(in);
             
             // Index the file
-            GAMIndex index;
+            StreamIndex<Alignment> index;
             index.index(cursor);
  
             // Save the GAM index in the appropriate place.
@@ -983,6 +1108,27 @@ int main_index(int argc, char** argv) {
             ofstream index_out(file_names.at(0) + ".gai");
             if (!index_out.good()) {
                 cerr << "error: [vg index] could not open " << file_names.at(0) << ".gai" << endl;
+                exit(1);
+            }
+            index.save(index_out);
+        });
+    }
+    
+    if (build_vgi_index) {
+        // Index an ID-sorted VG file.
+        get_input_file(file_names.at(0), [&](istream& in) {
+            // Grab the input VG stream and wrap it in a cursor
+            stream::ProtobufIterator<Graph> cursor(in);
+            
+            // Index the file
+            StreamIndex<Graph> index;
+            index.index(cursor);
+ 
+            // Save the index in the appropriate place.
+            // TODO: Do we really like this enforced naming convention just beacuse samtools does it?
+            ofstream index_out(file_names.at(0) + ".vgi");
+            if (!index_out.good()) {
+                cerr << "error: [vg index] could not open " << file_names.at(0) << ".vgi" << endl;
                 exit(1);
             }
             index.save(index_out);
@@ -1069,8 +1215,8 @@ int main_index(int argc, char** argv) {
 
     //Build snarl distance index
     if (build_dist) {
-        if (dist_graph.empty()) {
-            cerr << "error: [vg index] distance index requires a vg file" << endl;
+        if (file_names.empty()) {
+            cerr << "error: [vg index] one graph is required to build a distance index" << endl;
             return 1;
         } else if (dist_name.empty()) {
             cerr << "error: [vg index] distance index requires an output file" << endl;
@@ -1079,8 +1225,12 @@ int main_index(int argc, char** argv) {
             cerr << "error: [vg index] distance index requires a snarl file" << endl;
             return 1;
             
+        } else if (cap < 0) {
+            cerr << "error: [vg index] distance index requires a positive cap value" << endl;
+            return 1;
+            
         } else {
-            ifstream vg_stream(dist_graph);
+            ifstream vg_stream(file_names.at(0));
             if (!vg_stream) {
                 cerr << "error: [vg index] cannot open VG file" << endl;
                 exit(1);
@@ -1096,14 +1246,11 @@ int main_index(int argc, char** argv) {
             SnarlManager* snarl_manager = new SnarlManager(snarl_stream);
             snarl_stream.close();
 
-            int64_t cap = 20; //TODO: Take this as an argument or something
+            // Create the DistanceIndex
             DistanceIndex di (&vg, snarl_manager, cap);
             
-
- 
-            ofstream dist_out(dist_name);           
-            di.serialize(dist_out);
-            dist_out.close();
+            // Save the completed DistanceIndex
+            stream::VPKG::save(di, dist_name);
         }
 
     }
