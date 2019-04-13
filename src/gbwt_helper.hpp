@@ -28,8 +28,19 @@ inline pos_t gbwt_to_pos(gbwt::node_type node, size_t offset) {
     return make_pos_t(gbwt::Node::id(node), gbwt::Node::is_reverse(node), offset);
 }
 
+
+//moved from xg
+struct ThreadMapping {
+    int64_t node_id;
+    bool is_reverse;
+    /// We need comparison for deduplication in sets and canonically orienting threads
+    bool operator<(const ThreadMapping& other) const {
+        return tie(node_id, is_reverse) < tie(other.node_id, other.is_reverse);
+    }
+};
+    
 /// Convert gbwt::node_type to xg::XG:ThreadMapping.
-inline xg::XG::ThreadMapping gbwt_to_thread_mapping(gbwt::node_type node) {
+inline ThreadMapping gbwt_to_thread_mapping(gbwt::node_type node) {
     return { static_cast<int64_t>(gbwt::Node::id(node)), gbwt::Node::is_reverse(node) };
 }
 

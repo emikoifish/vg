@@ -1885,7 +1885,7 @@ bool XG::do_edges(const size_t& g, const size_t& start, const size_t& count, boo
             // TODO: delete this after using it to debug
             int64_t offset = g_iv[start + i * G_EDGE_LENGTH + G_EDGE_OFFSET_OFFSET];
             bool new_reverse = is_reverse != ((is_start && (type == 0)) || (!is_start && (type == 1)));
-            handle_t next_handle = handlegraph::number_bool_packing::pack(g + offset, new_reverse);r
+            handle_t next_handle = handlegraph::number_bool_packing::pack(g + offset, new_reverse);
         }
     }
     // Iteratee didn't stop us.
@@ -1941,12 +1941,12 @@ bool XG::for_each_handle_impl(const function<bool(const handle_t&)>& iteratee, b
                     }
                     
                     // How many edges are there of each type on this record?
-                    size_t edges_to_count = g_iv[g + G_NODE_TO_COUNT_OFFSET];
-                    size_t edges_from_count = g_iv[g + G_NODE_FROM_COUNT_OFFSET];
+                    size_t edges_start_side_count = g_iv[g + G_NODE_START_SIDE_COUNT_OFFSET];
+                    size_t edges_end_side_count = g_iv[g + G_NODE_END_SIDE_COUNT_OFFSET];
                     
                     // This record is the header plus all the edge records it contains.
                     // Decode the entry size in the same thread doing the iteration.
-                    g += G_NODE_HEADER_LENGTH + G_EDGE_LENGTH * (edges_to_count + edges_from_count);
+                    g += G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * (edges_start_side_count + edges_end_side_count);
                 }
             }
             
@@ -1964,12 +1964,12 @@ bool XG::for_each_handle_impl(const function<bool(const handle_t&)>& iteratee, b
             }
             
             // How many edges are there of each type on this record?
-            size_t edges_to_count = g_iv[g + G_NODE_TO_COUNT_OFFSET];
-            size_t edges_from_count = g_iv[g + G_NODE_FROM_COUNT_OFFSET];
+            size_t edges_start_side_count = g_iv[g + G_NODE_START_SIDE_COUNT_OFFSET];
+            size_t edges_end_side_count = g_iv[g + G_NODE_END_SIDE_COUNT_OFFSET];
             
             // This record is the header plus all the edge records it contains.
             // Decode the entry size in the same thread doing the iteration.
-            g += G_NODE_HEADER_LENGTH + G_EDGE_LENGTH * (edges_to_count + edges_from_count);
+            g += G_NODE_HEADER_OFFSET + G_EDGE_LENGTH * (edges_start_side_count + edges_end_side_count);
         }
     }
     

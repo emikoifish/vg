@@ -855,11 +855,11 @@ XGScoreProvider
 //}
 
 
-int64_t XGScoreProvider::get_haplotype_count() const {
-  // XG indexes track a haplotype count still.
-  // TODO: This should be removed!
-  return index.get_haplotype_count();
-}
+//int64_t XGScoreProvider::get_haplotype_count() const {
+//  // XG indexes track a haplotype count still.
+//  // TODO: This should be removed!
+//  return index.get_haplotype_count();
+//}
 
 /*******************************************************************************
 LinearScoreProvider
